@@ -3,19 +3,161 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Cold Run — Ice Delivery</title>
+  <title>Cold Run 3D — Ice Delivery</title>
   <style>
     html, body {
       margin: 0; padding: 0; overflow: hidden;
       background: #0b0e14; touch-action: none; overscroll-behavior: none;
       font-family: system-ui, -apple-system, sans-serif;
       user-select: none; -webkit-user-select: none;
+      color: #fff;
     }
-    #game { display: block; width: 100vw; height: 100vh; }
+    #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+    #vignette {
+      position: fixed; inset: 0; pointer-events: none; z-index: 2;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+    }
+    #hud {
+      position: fixed; top: 0; left: 0; right: 0; height: 44px; z-index: 5;
+      background: rgba(0,0,0,0.55); display: flex; align-items: center;
+      font-weight: bold; font-size: 20px; padding: 0 14px;
+    }
+    #hud .spacer { flex: 1; }
+    #hudTime.low { color: #ef476f; }
+    #hudScore { color: #7fe7f2; }
+    #hudCounts { color: #aed6f1; }
+    #minimap {
+      position: fixed; top: 54px; right: 12px; z-index: 5;
+      border-radius: 6px; box-shadow: 0 0 0 1px rgba(255,255,255,0.15);
+    }
+    #deliveries {
+      position: fixed; top: 54px; left: 12px; z-index: 5; width: 190px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .dstop {
+      background: rgba(0,0,0,0.55); border-radius: 6px; padding: 6px 8px;
+      font-size: 12px;
+    }
+    .dstop .nm { font-weight: bold; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dstop .bar { height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; }
+    .dstop .bar > div { height: 100%; border-radius: 3px; }
+    #compass {
+      position: fixed; top: 54px; left: 50%; transform: translateX(-50%); z-index: 5;
+      background: rgba(0,0,0,0.55); border-radius: 20px; padding: 6px 14px;
+      font-size: 15px; font-weight: bold; color: #7fe7f2; display: flex; align-items: center; gap: 8px;
+    }
+    #compassArrow { display: inline-block; font-size: 20px; transition: transform 0.1s linear; }
+    #dash {
+      position: fixed; left: 0; right: 0; bottom: 0; height: 92px; z-index: 4;
+      pointer-events: none;
+      background: linear-gradient(to top, rgba(5,5,8,0.95) 30%, rgba(5,5,8,0.55) 70%, transparent);
+    }
+    #speedo {
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
+      font-size: 34px; font-weight: bold; color: #e8c547; text-shadow: 0 2px 6px #000;
+      pointer-events: none;
+    }
+    #speedo small { font-size: 14px; color: #999; font-weight: normal; }
+    #honkBtn {
+      position: fixed; right: 22px; bottom: 110px; z-index: 6;
+      width: 72px; height: 72px; border-radius: 50%;
+      background: #555; font-size: 34px; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.6); opacity: 0.35;
+    }
+    #honkBtn.ready { background: #e8c547; opacity: 1; }
+    #touch { display: none; }
+    body.touch #touch { display: block; }
+    .tbtn {
+      position: fixed; z-index: 6; width: 84px; height: 84px; border-radius: 50%;
+      background: rgba(255,255,255,0.12); border: 2px solid rgba(255,255,255,0.25);
+      font-size: 32px; color: #fff; display: flex; align-items: center; justify-content: center;
+    }
+    .tbtn.on { background: rgba(232,197,71,0.45); }
+    #tLeft { left: 18px; bottom: 110px; }
+    #tRight { left: 116px; bottom: 110px; }
+    #tGas { right: 116px; bottom: 196px; }
+    #tBrake { right: 18px; bottom: 196px; }
+    body.touch #honkBtn { bottom: 290px; }
+    #flash {
+      position: fixed; top: 84px; left: 50%; transform: translateX(-50%); z-index: 7;
+      font-size: 26px; font-weight: bold; color: #ef476f; text-shadow: 0 2px 8px #000;
+      display: none; pointer-events: none;
+    }
+    #hint {
+      position: fixed; bottom: 104px; left: 50%; transform: translateX(-50%); z-index: 7;
+      font-size: 15px; font-weight: bold; color: #fff; text-shadow: 0 2px 6px #000;
+      background: rgba(0,0,0,0.5); padding: 6px 14px; border-radius: 16px;
+      display: none; pointer-events: none;
+    }
+    .overlay {
+      position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center;
+      background: rgba(0,0,0,0.78); padding: 20px;
+    }
+    .overlay h1 { color: #7fe7f2; font-size: 46px; margin: 0 0 12px; }
+    .overlay p { margin: 6px 0; font-size: 16px; color: #aed6f1; max-width: 560px; }
+    .overlay .go { color: #e8c547; font-weight: bold; font-size: 20px; margin-top: 18px; }
+    .overlay .sub { color: #888; font-size: 14px; }
+    #lunchOverlay { display: none; z-index: 9; }
+    #lunchOverlay .big { font-size: 64px; color: #e8c547; font-weight: bold; }
+    #over { display: none; }
+    #menu { display: flex; }
   </style>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
 </head>
 <body>
-  <canvas id="game"></canvas>
-  <script src="main.js"></script>
+  <canvas id="scene"></canvas>
+  <div id="vignette"></div>
+
+  <div id="hud">
+    <span id="hudTime">⏱ 3:00</span>
+    <span class="spacer"></span>
+    <span id="hudScore">🧊 0</span>
+    <span class="spacer"></span>
+    <span id="hudCounts">📦 0&nbsp;&nbsp;✖ 0</span>
+  </div>
+  <canvas id="minimap" width="150" height="104"></canvas>
+  <div id="deliveries"></div>
+  <div id="compass"><span id="compassArrow">➤</span><span id="compassDist"></span></div>
+
+  <div id="dash"></div>
+  <div id="speedo">0 <small>mph</small></div>
+  <div id="honkBtn">📯</div>
+
+  <div id="touch">
+    <div class="tbtn" id="tLeft">◀</div>
+    <div class="tbtn" id="tRight">▶</div>
+    <div class="tbtn" id="tGas">▲</div>
+    <div class="tbtn" id="tBrake">▼</div>
+  </div>
+
+  <div id="flash"></div>
+  <div id="hint"></div>
+
+  <div class="overlay" id="lunchOverlay">
+    <h1>🍔 MANDATORY LUNCH</h1>
+    <div class="big" id="lunchCount">8</div>
+    <p>Union rules. The ice keeps melting.</p>
+  </div>
+
+  <div class="overlay" id="menu">
+    <h1>🧊 COLD RUN 3D</h1>
+    <p>Deliver ice across the city before it melts. Windshield view — you're behind the wheel now.</p>
+    <p>🚦 Traffic obeys lights &amp; stop signs. Running a red costs you 3s — green is your window to move.</p>
+    <p>🗺️ Streets are fast, cutting through blocks is slow. Watch the minimap.</p>
+    <p>🚶 Don't clip pedestrians. 📯 Honk to shoo blockers. 🍔 Mandatory lunch at halftime.</p>
+    <p class="go">Tap or press Enter to start your shift</p>
+    <p class="sub">Arrows / WASD to drive (▲ gas · ▼ brake · ◀ ▶ steer) · Space to honk</p>
+  </div>
+
+  <div class="overlay" id="over">
+    <h1>SHIFT OVER</h1>
+    <p id="overStats"></p>
+    <p class="go">Tap or press Enter to run it back</p>
+  </div>
+
+  <script type="module" src="main.js"></script>
 </body>
 </html>
