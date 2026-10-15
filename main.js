@@ -82,15 +82,26 @@ const renderer = new THREE.WebGLRenderer({ canvas: sceneCanvas, antialias: true 
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x070a12);
-scene.fog = new THREE.Fog(0x070a12, 260, 1050);
+scene.background = new THREE.Color(0x0c1224);
+scene.fog = new THREE.Fog(0x0c1224, 260, 1200);
 const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 1, 2600);
 scene.add(camera);
 
-scene.add(new THREE.HemisphereLight(0x3a4a6b, 0x0b0e14, 0.75));
-const moon = new THREE.DirectionalLight(0x8fb4ff, 0.55);
+scene.add(new THREE.HemisphereLight(0x5a6f9e, 0x141a28, 1.0));
+const moon = new THREE.DirectionalLight(0x8fb4ff, 0.75);
 moon.position.set(300, 600, 200);
 scene.add(moon);
+// headlights: spotlight + visible beam cone
+const headlight = new THREE.SpotLight(0xffeecf, 120, 700, 0.48, 0.55, 1.4);
+scene.add(headlight);
+scene.add(headlight.target);
+const coneGeo = new THREE.ConeGeometry(70, 260, 20, 1, true);
+coneGeo.rotateX(-Math.PI / 2); // apex toward -Z (the truck)
+const headCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
+  color: 0xffedb8, transparent: true, opacity: 0.07,
+  blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false,
+}));
+scene.add(headCone);
 // moon disc
 const moonMesh = new THREE.Mesh(
   new THREE.SphereGeometry(40, 16, 16),
@@ -166,9 +177,9 @@ function buildStatic() {
 
   // buildings
   const sideMats = [
-    new THREE.MeshLambertMaterial({ map: buildingTexture("#1a2030", 0.35) }),
-    new THREE.MeshLambertMaterial({ map: buildingTexture("#20242f", 0.22) }),
-    new THREE.MeshLambertMaterial({ map: buildingTexture("#161b28", 0.45) }),
+    new THREE.MeshLambertMaterial({ map: buildingTexture("#232a3d", 0.45) }),
+    new THREE.MeshLambertMaterial({ map: buildingTexture("#262c3a", 0.3) }),
+    new THREE.MeshLambertMaterial({ map: buildingTexture("#1c2334", 0.55) }),
   ];
   for (const b of blocks) {
     const geo = new THREE.BoxGeometry(b.w, b.h, b.d);
@@ -179,9 +190,9 @@ function buildStatic() {
   }
 
   // streetlights every 3rd intersection
-  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe2a0 });
   const poolMat = new THREE.MeshBasicMaterial({
-    color: 0xffd98a, transparent: true, opacity: 0.07,
+    color: 0xffd98a, transparent: true, opacity: 0.13,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   for (const n of intersections) {
@@ -190,7 +201,7 @@ function buildStatic() {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 46, 6), MAT.pole);
     pole.position.set(px, 23, pz);
     scene.add(pole);
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(2.4, 8, 8), lampMat);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(3.4, 8, 8), lampMat);
     lamp.position.set(px, 47, pz);
     scene.add(lamp);
     const pool = new THREE.Mesh(new THREE.CircleGeometry(42, 20), poolMat);
@@ -336,7 +347,8 @@ let lunchDone, lunchTimer, hitCooldown = 0, ticketCooldown = 0, buildCooldown = 
 let flashTimer = 0;
 const MAX_CRATES = 10;
 let crates; // ice load: full = heavy & grippy, empty = light & skittish
-const player = { x: 0, z: 0, heading: Math.PI / 2, speed: 0 };
+const player = { x: 0, z: 0, heading: Math.PI / 2, speed: 0, vx: 0, vz: 0 };
+let steerSm = 0; // smoothed steering input (classic arcade ease-in/out)
 
 const MAX_CARS = 16, MAX_PEDS = 8, MAX_STOPS = 6;
 const carPool = [], pedPool = [], stopPool = [];
@@ -375,7 +387,8 @@ function resetGame() {
   lunchDone = false; lunchTimer = 0;
   hitCooldown = 0; ticketCooldown = 0; buildCooldown = 0; flashTimer = 0;
   player.x = vStreets[0]; player.z = hStreets[0];
-  player.heading = Math.PI / 2; player.speed = 0;
+  player.heading = Math.PI / 2; player.speed = 0; player.vx = 0; player.vz = 0;
+  steerSm = 0;
   for (const p of carPool) p.group.visible = false;
   for (const g of pedPool) g.visible = false;
   for (const s of stopPool) { s.beacon.group.visible = false; s.blocker.visible = false; }
@@ -651,14 +664,23 @@ function update(dt) {
     player.speed = Math.max(-maxR, Math.min(maxF, player.speed));
 
     const steer = (left ? -1 : 0) + (right ? 1 : 0);
-    if (steer !== 0 && player.speed !== 0) {
-      // light truck = twitchier steering
-      player.heading += steer * 2.5 * (1.3 - 0.3 * wf) *
-        Math.min(1, Math.abs(player.speed) / 130) * Math.sign(player.speed) * dt;
+    // classic arcade steering: input eases in/out, full lock at low speed,
+    // less at speed so you don't spin out
+    steerSm += (steer - steerSm) * Math.min(1, dt * (steer !== 0 ? 7 : 11));
+    const sr = Math.min(1, Math.abs(player.speed) / MAX_FWD);
+    if (Math.abs(steerSm) > 0.02 && player.speed !== 0) {
+      player.heading += steerSm * 3.0 * (1 - 0.55 * sr) * (1.15 - 0.15 * wf) *
+        Math.sign(player.speed) * dt;
     }
     const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
-    player.x += fx * player.speed * dt;
-    player.z += fz * player.speed * dt;
+    // grip model: velocity chases where the truck points.
+    // heavy truck = planted, light truck = drifts wide (the Out Run feel)
+    const grip = 4 + 4 * wf;
+    const gk = Math.min(1, grip * dt);
+    player.vx += (fx * player.speed - player.vx) * gk;
+    player.vz += (fz * player.speed - player.vz) * gk;
+    player.x += player.vx * dt;
+    player.z += player.vz * dt;
     player.x = Math.max(20, Math.min(WORLD_W - 20, player.x));
     player.z = Math.max(20, Math.min(WORLD_H - 20, player.z));
 
@@ -676,10 +698,13 @@ function update(dt) {
         const nx = dx / d, nz = dz / d;
         player.x = cx + nx * 14;
         player.z = cz + nz * 14;
+        // strip velocity into the wall so the truck slides along it
+        const vn = player.vx * nx + player.vz * nz;
+        if (vn < 0) { player.vx -= nx * vn; player.vz -= nz * vn; }
         // velocity into the wall?
         const fx0 = Math.sin(player.heading), fz0 = Math.cos(player.heading);
-        const vn = fx0 * player.speed * nx + fz0 * player.speed * nz;
-        if (vn < -80) {
+        const vn0 = fx0 * player.speed * nx + fz0 * player.speed * nz;
+        if (vn0 < -80) {
           // hard hit
           if (buildCooldown <= 0) {
             buildCooldown = 0.8;
@@ -687,13 +712,19 @@ function update(dt) {
             beep(120, 0.25, "sawtooth", 0.2);
           }
           player.speed *= 0.35;
+          player.vx *= 0.35; player.vz *= 0.35;
         } else {
           // scrape: keep most of the speed so wall-sliding works
           player.speed *= 0.985;
+          player.vx *= 0.985; player.vz *= 0.985;
         }
         break;
       }
     }
+  } else {
+    // frozen (lunch): bleed off motion so the truck doesn't lurch after
+    const dk = Math.max(0, 1 - 5 * dt);
+    player.vx *= dk; player.vz *= dk;
   }
 
   // --- traffic + pedestrians ---
@@ -719,6 +750,7 @@ function update(dt) {
         flash("💥 CRASH! -3s", 1.2);
         beep(140, 0.25, "sawtooth", 0.2);
         player.speed *= 0.3;
+        player.vx *= 0.3; player.vz *= 0.3;
         break;
       }
     }
@@ -827,6 +859,13 @@ function update(dt) {
   const wantPitch = lunchTimer > 0 ? 0 :
     (gas && player.speed >= 0 ? -7 : (brake && player.speed > 30 ? 9 : 0));
   pitchSm += (wantPitch - pitchSm) * Math.min(1, dt * 5);
+
+  // headlights follow the truck
+  const hfx = Math.sin(player.heading), hfz = Math.cos(player.heading);
+  headlight.position.set(player.x + hfx * 20, 18, player.z + hfz * 20);
+  headlight.target.position.set(player.x + hfx * 300, 0, player.z + hfz * 300);
+  headCone.position.set(player.x + hfx * 130, 10, player.z + hfz * 130);
+  headCone.rotation.y = player.heading;
 
   updateSignalLamps();
   updateCamera(dt);
