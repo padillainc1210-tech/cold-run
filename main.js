@@ -669,7 +669,10 @@ function update(dt) {
     steerSm += (steer - steerSm) * Math.min(1, dt * (steer !== 0 ? 7 : 11));
     const sr = Math.min(1, Math.abs(player.speed) / MAX_FWD);
     if (Math.abs(steerSm) > 0.02 && player.speed !== 0) {
-      player.heading += steerSm * 3.0 * (1 - 0.55 * sr) * (1.15 - 0.15 * wf) *
+            // NOTE: heading DECREASES with left input — camera sits behind the truck
+             // looking forward, so screen-right is world -x; this keeps left-arrow turning
+             // toward screen-left (and mirrors correctly in reverse via sign(speed)).
+             player.heading -= steerSm * 3.0 * (1 - 0.55 * sr) * (1.15 - 0.15 * wf) *
         Math.sign(player.speed) * dt;
     }
     const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
