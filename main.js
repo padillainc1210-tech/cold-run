@@ -11,6 +11,7 @@ const $ = (id) => document.getElementById(id);
 const sceneCanvas = $("scene"), mmCanvas = $("minimap"), mmCtx = mmCanvas.getContext("2d");
 const hudTime = $("hudTime"), hudScore = $("hudScore"), hudCounts = $("hudCounts");
 const deliveriesEl = $("deliveries"), compassArrow = $("compassArrow"), compassDist = $("compassDist");
+const cargoBar = $("cargoBar");
 const speedo = $("speedo"), honkBtn = $("honkBtn"), flashEl = $("flash"), hintEl = $("hint");
 const menuEl = $("menu"), overEl = $("over"), overStats = $("overStats");
 const lunchOverlay = $("lunchOverlay"), lunchCount = $("lunchCount");
@@ -333,6 +334,8 @@ let stops = [], cars = [], pedestrians = [];
 let elapsed = 0, stopVersion = 0;
 let lunchDone, lunchTimer, hitCooldown = 0, ticketCooldown = 0, buildCooldown = 0;
 let flashTimer = 0;
+const MAX_CRATES = 10;
+let crates; // ice load: full = heavy & grippy, empty = light & skittish
 const player = { x: 0, z: 0, heading: Math.PI / 2, speed: 0 };
 
 const MAX_CARS = 16, MAX_PEDS = 8, MAX_STOPS = 6;
@@ -366,6 +369,7 @@ function initPools() {
 function resetGame() {
   timeLeft = SHIFT_LEN;
   score = 0; delivered = 0; missed = 0; tickets = 0;
+  crates = MAX_CRATES;
   stops = []; cars = []; pedestrians = [];
   elapsed = 0; stopVersion++;
   lunchDone = false; lunchTimer = 0;
@@ -576,7 +580,16 @@ function flash(text, secs = 1.6) {
 }
 
 /* ---------------- update ---------------- */
-const ACCEL = 330, BRAKE = 560, MAX_FWD = 335, MAX_REV = 120;
+const ACCEL = 330, BRAKE = 420, MAX_FWD = 335, MAX_REV = 120;
+const GEAR_TOPS = [70, 140, 210, 285]; // 5 forward gears
+function gearFor(speed) {
+  if (speed < -2) return "R";
+  if (speed < 2) return "N";
+  let g = 1;
+  for (const t of GEAR_TOPS) if (speed > t) g++;
+  return String(Math.min(g, 5));
+}
+let pitchSm = 0;
 function update(dt) {
   elapsed += dt;
   timeLeft -= dt;
@@ -611,10 +624,24 @@ function update(dt) {
   const frozen = lunchTimer > 0;
 
   if (!frozen) {
-    if (gas) player.speed += ACCEL * dt;
-    if (brake) player.speed -= (player.speed > 0 ? BRAKE : ACCEL * 0.6) * dt;
-    // rolling resistance
-    player.speed -= player.speed * 0.55 * dt;
+    // weight: full ice load = planted & grippy; empty = light, twitchy, long brakes
+    const wf = 0.35 + 0.65 * (crates / MAX_CRATES);
+    if (gas) {
+      if (player.speed >= 0) {
+        // torque curve: punchy off the line, tapers toward top speed (~3s 0-to-top)
+        const pull = 400 * Math.max(0.3, 1 - player.speed / 430) * (1.25 - 0.25 * wf);
+        player.speed += pull * dt;
+      } else {
+        player.speed += ACCEL * 0.6 * dt; // weak pull out of reverse
+      }
+    }
+    if (brake) {
+      // lighter truck = less weight over the wheels = longer stopping distance
+      if (player.speed > 0) player.speed -= BRAKE * (0.35 + 0.65 * wf) * dt;
+      else player.speed -= ACCEL * 0.6 * dt; // reverse
+    }
+    // rolling resistance / engine braking
+    player.speed -= player.speed * 0.4 * dt;
     if (Math.abs(player.speed) < 2 && !gas && !brake) player.speed = 0;
 
     const street = onStreet(player.x, player.z);
@@ -624,8 +651,9 @@ function update(dt) {
 
     const steer = (left ? -1 : 0) + (right ? 1 : 0);
     if (steer !== 0 && player.speed !== 0) {
-      player.heading += steer * 2.5 * Math.min(1, Math.abs(player.speed) / 130) *
-        Math.sign(player.speed) * dt;
+      // light truck = twitchier steering
+      player.heading += steer * 2.5 * (1.3 - 0.3 * wf) *
+        Math.min(1, Math.abs(player.speed) / 130) * Math.sign(player.speed) * dt;
     }
     const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
     player.x += fx * player.speed * dt;
@@ -745,6 +773,11 @@ function update(dt) {
       const tip = Math.round((s.melt / s.meltMax) * 100);
       score += 100 + tip;
       delivered++;
+      if (crates > 0) {
+        crates--;
+        if (crates === 5) flash("🧊 HALF EMPTY — brakes fading", 1.8);
+        else if (crates === 0) flash("🧊 EMPTY — good luck stopping", 2.0);
+      }
       beep(660, 0.1, "square"); setTimeout(() => beep(880, 0.14, "square"), 90);
       removeStop(i);
     } else if (s.melt <= 0) {
@@ -789,6 +822,11 @@ function update(dt) {
     if (flashTimer <= 0) flashEl.style.display = "none";
   }
 
+  // weight-shift feel: pitch the view under accel/brake, widen FOV with speed
+  const wantPitch = lunchTimer > 0 ? 0 :
+    (gas && player.speed >= 0 ? -7 : (brake && player.speed > 30 ? 9 : 0));
+  pitchSm += (wantPitch - pitchSm) * Math.min(1, dt * 5);
+
   updateSignalLamps();
   updateCamera(dt);
   updateHUD();
@@ -800,7 +838,7 @@ let hoodAdded = false;
 function updateCamera(dt) {
   const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
   camPos.set(player.x - fx * 38, 17, player.z - fz * 38);
-  camLook.set(player.x + fx * 75, 5, player.z + fz * 75);
+  camLook.set(player.x + fx * 75, 5 + pitchSm, player.z + fz * 75);
   camera.position.lerp(camPos, Math.min(1, dt * 8));
   const lookCur = new THREE.Vector3();
   camera.getWorldDirection(lookCur);
@@ -808,6 +846,10 @@ function updateCamera(dt) {
   lookCur.lerp(want, Math.min(1, dt * 8)).normalize();
   const target = camera.position.clone().add(lookCur);
   camera.lookAt(target);
+  // subtle FOV widening with speed
+  const targetFov = 68 + Math.min(1, Math.abs(player.speed) / MAX_FWD) * 7;
+  camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+  camera.updateProjectionMatrix();
 
   if (!hoodAdded) {
     hoodAdded = true;
@@ -871,7 +913,12 @@ function updateHUD() {
     compassDist.textContent = `${Math.round(bd / 10) * 10}m`;
   }
 
-  speedo.innerHTML = `${Math.round(Math.abs(player.speed) * 0.22)} <small>mph</small>`;
+  speedo.innerHTML = `${Math.round(Math.abs(player.speed) * 0.22)} <small>mph</small><span id="gear">${gearFor(player.speed)}</span>`;
+
+  // cargo meter: full bar = planted, empty = skittish
+  const cf = crates / MAX_CRATES;
+  cargoBar.style.width = `${cf * 100}%`;
+  cargoBar.style.background = cf > 0.5 ? "#7fe7f2" : cf > 0.2 ? "#f2c14e" : "#ef476f";
 
   // minimap
   const mw = mmCanvas.width, mh = mmCanvas.height;

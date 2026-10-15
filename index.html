@@ -31,9 +31,17 @@
       border-radius: 6px; box-shadow: 0 0 0 1px rgba(255,255,255,0.15);
     }
     #deliveries {
-      position: fixed; top: 54px; left: 12px; z-index: 5; width: 190px;
+      position: fixed; top: 112px; left: 12px; z-index: 5; width: 190px;
       display: flex; flex-direction: column; gap: 6px;
     }
+    #cargo {
+      position: fixed; top: 54px; left: 12px; z-index: 5; width: 190px;
+      background: rgba(0,0,0,0.55); border-radius: 6px; padding: 6px 8px;
+      font-size: 12px;
+    }
+    #cargo .nm { font-weight: bold; margin-bottom: 4px; }
+    #cargo .bar { height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; }
+    #cargoBar { height: 100%; border-radius: 3px; background: #7fe7f2; width: 100%; }
     .dstop {
       background: rgba(0,0,0,0.55); border-radius: 6px; padding: 6px 8px;
       font-size: 12px;
@@ -58,6 +66,10 @@
       pointer-events: none;
     }
     #speedo small { font-size: 14px; color: #999; font-weight: normal; }
+    #gear {
+      font-size: 15px; color: #7fe7f2; border: 1px solid #7fe7f2;
+      border-radius: 5px; padding: 2px 8px; margin-left: 8px; vertical-align: middle;
+    }
     #honkBtn {
       position: fixed; right: 22px; bottom: 110px; z-index: 6;
       width: 72px; height: 72px; border-radius: 50%;
@@ -119,11 +131,12 @@
     <span id="hudCounts">📦 0&nbsp;&nbsp;✖ 0</span>
   </div>
   <canvas id="minimap" width="150" height="104"></canvas>
+  <div id="cargo"><div class="nm">🧊 ICE LOAD</div><div class="bar"><div id="cargoBar"></div></div></div>
   <div id="deliveries"></div>
   <div id="compass"><span id="compassArrow">➤</span><span id="compassDist"></span></div>
 
   <div id="dash"></div>
-  <div id="speedo">0 <small>mph</small></div>
+  <div id="speedo">0 <small>mph</small><span id="gear">N</span></div>
   <div id="honkBtn">📯</div>
 
   <div id="touch">
@@ -148,6 +161,7 @@
     <p>🚦 Traffic obeys lights &amp; stop signs. Running a red costs you 3s — green is your window to move.</p>
     <p>🗺️ Streets are fast, cutting through blocks is slow. Watch the minimap.</p>
     <p>🚶 Don't clip pedestrians. 📯 Honk to shoo blockers. 🍔 Mandatory lunch at halftime.</p>
+    <p>🧊 You start fully loaded — every delivery lightens the truck, and an empty truck is harder to stop.</p>
     <p class="go">Tap or press Enter to start your shift</p>
     <p class="sub">Arrows / WASD to drive (▲ gas · ▼ brake · ◀ ▶ steer) · Space to honk</p>
   </div>
