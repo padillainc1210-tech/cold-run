@@ -34,7 +34,8 @@ function beep(freq, dur, type = "sine", vol = 0.12) {
 /* ---------------- city data (x right, z down-map) ---------------- */
 const WORLD_W = 2600, WORLD_H = 1800;
 const BLOCK = 190, STREET_W = 52, SHIFT_LEN = 180;
-const LIGHT_PERIOD = 12, GREEN_T = 5, YELLOW_T = 1;
+// NYC DOT-style signal timing: 9s green, 3s amber, 2s all-red clearance per phase
+const LIGHT_PERIOD = 28, GREEN_T = 9, YELLOW_T = 3, ALLRED_T = 2;
 
 let vStreets = [], hStreets = [], intersections = [], blocks = [];
 function buildCityData() {
@@ -61,11 +62,14 @@ function buildCityData() {
     }
 }
 function lightPhase(light, t) {
+  // NYC phasing: green -> amber -> all-red clearance -> cross street green
   const l = (t + light.offset) % LIGHT_PERIOD;
   if (l < GREEN_T) return "H";
   if (l < GREEN_T + YELLOW_T) return "HY";
-  if (l < GREEN_T + YELLOW_T + GREEN_T) return "V";
-  return "VY";
+  if (l < GREEN_T + YELLOW_T + ALLRED_T) return "AR";
+  if (l < GREEN_T + YELLOW_T + ALLRED_T + GREEN_T) return "V";
+  if (l < GREEN_T + YELLOW_T + ALLRED_T + GREEN_T + YELLOW_T) return "VY";
+  return "AR";
 }
 const axisGreen = (light, t, vertical) => {
   const p = lightPhase(light, t);
@@ -189,25 +193,46 @@ function buildStatic() {
     scene.add(mesh);
   }
 
-  // streetlights every 3rd intersection
-  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe2a0 });
+  // NYC DOT-standard cobra-head streetlights: staggered sides, every other block,
+  // warm sodium-vapor glow like the real city at night
+  const poleGeo = new THREE.CylinderGeometry(1.1, 1.5, 46, 6);
+  const armGeo = new THREE.BoxGeometry(16, 1.6, 1.6);
+  const headGeo = new THREE.BoxGeometry(7, 2.2, 3.2);
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffa64d });
+  const poolGeo = new THREE.CircleGeometry(40, 18);
   const poolMat = new THREE.MeshBasicMaterial({
-    color: 0xffd98a, transparent: true, opacity: 0.13,
+    color: 0xff9a3c, transparent: true, opacity: 0.10,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
-  for (const n of intersections) {
-    if ((n.i + n.j) % 3 !== 0) continue;
-    const px = n.x + STREET_W / 2 + 8, pz = n.z + STREET_W / 2 + 8;
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 46, 6), MAT.pole);
-    pole.position.set(px, 23, pz);
-    scene.add(pole);
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(3.4, 8, 8), lampMat);
-    lamp.position.set(px, 47, pz);
-    scene.add(lamp);
-    const pool = new THREE.Mesh(new THREE.CircleGeometry(42, 20), poolMat);
+  function cobraHead(px, pz, armDirX, armDirZ) {
+    const pole = new THREE.Mesh(poleGeo, MAT.pole);
+    pole.position.set(px, 23, pz); scene.add(pole);
+    const arm = new THREE.Mesh(armGeo, MAT.pole);
+    arm.position.set(px + armDirX * 8, 45, pz + armDirZ * 8);
+    if (armDirZ !== 0) arm.rotation.y = Math.PI / 2;
+    scene.add(arm);
+    const hx = px + armDirX * 15, hz = pz + armDirZ * 15;
+    const head = new THREE.Mesh(headGeo, lampMat);
+    head.position.set(hx, 44, hz);
+    if (armDirZ !== 0) head.rotation.y = Math.PI / 2;
+    scene.add(head);
+    const pool = new THREE.Mesh(poolGeo, poolMat);
     pool.rotation.x = -Math.PI / 2;
-    pool.position.set(px, 0.4, pz);
-    scene.add(pool);
+    pool.position.set(hx, 0.4, hz); scene.add(pool);
+  }
+  for (let i = 0; i < vStreets.length; i++) {
+    for (let j = 0; j < hStreets.length - 1; j += 2) {
+      const side = ((i + j) % 2 === 0) ? 1 : -1;
+      cobraHead(vStreets[i] + side * (STREET_W / 2 + 7),
+        (hStreets[j] + hStreets[j + 1]) / 2, -side, 0);
+    }
+  }
+  for (let j = 0; j < hStreets.length; j++) {
+    for (let i = 0; i < vStreets.length - 1; i += 2) {
+      const side = ((i + j) % 2 === 0) ? 1 : -1;
+      cobraHead((vStreets[i] + vStreets[i + 1]) / 2,
+        hStreets[j] + side * (STREET_W / 2 + 7), 0, -side);
+    }
   }
 }
 const dashTexBase = dashTexture();
@@ -259,16 +284,17 @@ function buildSignals() {
   }
 }
 function updateSignalLamps() {
+  // each lamp is a full 3-color head for its axis: green / amber / red
   for (const lh of lightHeads) {
     const phase = lightPhase(lh.n.light, elapsed);
     if (phase === lh.lastPhase) continue;
     lh.lastPhase = phase;
     if (phase === "H") lh.hMat.color.setHex(0x2eff70);
     else if (phase === "HY") lh.hMat.color.setHex(0xffe14d);
-    else lh.hMat.color.setHex(0x3a0d0d);
+    else lh.hMat.color.setHex(0xff2a2a);
     if (phase === "V") lh.vMat.color.setHex(0x2eff70);
     else if (phase === "VY") lh.vMat.color.setHex(0xffe14d);
-    else lh.vMat.color.setHex(0x3a0d0d);
+    else lh.vMat.color.setHex(0xff2a2a);
   }
 }
 
@@ -669,10 +695,10 @@ function update(dt) {
     steerSm += (steer - steerSm) * Math.min(1, dt * (steer !== 0 ? 7 : 11));
     const sr = Math.min(1, Math.abs(player.speed) / MAX_FWD);
     if (Math.abs(steerSm) > 0.02 && player.speed !== 0) {
-            // NOTE: heading DECREASES with left input — camera sits behind the truck
-             // looking forward, so screen-right is world -x; this keeps left-arrow turning
-             // toward screen-left (and mirrors correctly in reverse via sign(speed)).
-             player.heading -= steerSm * 3.0 * (1 - 0.55 * sr) * (1.15 - 0.15 * wf) *
+      // NOTE: heading DECREASES with left input — camera sits behind the truck
+      // looking forward, so screen-right is world -x; this keeps ◀ turning
+      // toward screen-left (and mirrors correctly in reverse via sign(speed)).
+      player.heading -= steerSm * 3.0 * (1 - 0.55 * sr) * (1.15 - 0.15 * wf) *
         Math.sign(player.speed) * dt;
     }
     const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
@@ -772,13 +798,15 @@ function update(dt) {
     }
   }
 
-  // --- red-light tickets ---
+  // --- red-light tickets (amber is legal to enter, NYC-style: only red is ticketed) ---
   if (Math.abs(player.speed) > 30 && ticketCooldown <= 0 && !frozen) {
     const horiz = Math.abs(Math.sin(player.heading)) >= Math.abs(Math.cos(player.heading));
     for (const n of intersections) {
       if (!n.light) continue;
       if (Math.hypot(player.x - n.x, player.z - n.z) > 52) continue;
-      if (!axisGreen(n.light, elapsed, !horiz)) {
+      const p = lightPhase(n.light, elapsed);
+      const ok = horiz ? (p === "H" || p === "HY") : (p === "V" || p === "VY");
+      if (!ok) {
         ticketCooldown = 3; tickets++;
         timeLeft = Math.max(0, timeLeft - 3);
         flash("🚨 RED LIGHT! -3s", 1.6);
