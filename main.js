@@ -550,8 +550,9 @@ function bindHold(id, prop) {
   el.addEventListener("pointercancel", off);
   el.addEventListener("pointerleave", off);
 }
-bindHold("tGas", "gas"); bindHold("tBrake", "brake");
-bindHold("tLeft", "left"); bindHold("tRight", "right");
+bindHold("dUp", "gas"); bindHold("dDown", "brake");
+bindHold("dLeft", "left"); bindHold("dRight", "right");
+bindHold("btnA", "gas"); bindHold("btnB", "brake");
 honkBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); if (state === "play") honk(); });
 menuEl.addEventListener("pointerdown", () => { if (state !== "play") startGame(); });
 overEl.addEventListener("pointerdown", () => { if (state === "over") startGame(); });
