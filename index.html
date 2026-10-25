@@ -54,6 +54,11 @@
       background: rgba(0,0,0,0.55); border-radius: 20px; padding: 6px 14px;
       font-size: 15px; font-weight: bold; color: #7fe7f2; display: flex; align-items: center; gap: 8px;
     }
+    #loc {
+      position: fixed; top: 92px; left: 50%; transform: translateX(-50%); z-index: 5;
+      background: rgba(0,0,0,0.55); border-radius: 20px; padding: 4px 14px;
+      font-size: 13px; font-weight: bold; color: #e8c547; white-space: nowrap;
+    }
     #compassArrow { display: inline-block; font-size: 20px; transition: transform 0.1s linear; }
     #dash {
       position: fixed; left: 0; right: 0; bottom: 0; height: 92px; z-index: 4;
@@ -152,6 +157,7 @@
   <div id="cargo"><div class="nm">🧊 ICE LOAD</div><div class="bar"><div id="cargoBar"></div></div></div>
   <div id="deliveries"></div>
   <div id="compass"><span id="compassArrow">➤</span><span id="compassDist"></span></div>
+  <div id="loc"></div>
 
   <div id="dash"></div>
   <div id="speedo">0 <small>mph</small><span id="gear">N</span></div>
@@ -183,6 +189,7 @@
     <p>Deliver ice across the city before it melts. Windshield view — you're behind the wheel now.</p>
     <p>🚦 NYC-style signals: 3s amber, all-red clearance. Running a red costs you 3s — amber is legal, green is your window.</p>
     <p>💡 NYC streetlights on every block, plus fresh lane paint and crosswalks.</p>
+    <p>🗽 Midtown Manhattan grid — 5th to 10th Ave, W 34th to W 50th St, one-way avenues and streets.</p>
     <p>🗺️ Streets are fast, cutting through blocks is slow. Watch the minimap.</p>
     <p>🚶 Don't clip pedestrians. 📯 Honk to shoo blockers. 🍔 Mandatory lunch at halftime.</p>
     <p>🧊 You start fully loaded — every delivery lightens the truck, and an empty truck is harder to stop.</p>
@@ -197,6 +204,6 @@
     <p class="go">Tap or press Enter to run it back</p>
   </div>
 
-  <script type="module" src="main.js?v=20261025b"></script>
+  <script type="module" src="main.js?v=20261025c"></script>
 </body>
 </html>
