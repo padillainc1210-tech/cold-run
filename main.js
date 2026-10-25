@@ -146,6 +146,20 @@ function dashTexture() {
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
 }
+// zebra crosswalk: one white bar per tile, repeated into stripes.
+// barsAlongX = true -> bars elongated along X (crossing a vertical street)
+function crosswalkTexture(barsAlongX) {
+  const c = document.createElement("canvas");
+  c.width = 64; c.height = 64;
+  const g = c.getContext("2d");
+  g.clearRect(0, 0, 64, 64);
+  g.fillStyle = "rgba(223,230,238,0.75)";
+  if (barsAlongX) g.fillRect(0, 10, 64, 24);
+  else g.fillRect(10, 0, 24, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
 
 /* ---------------- static geometry ---------------- */
 const MAT = {
@@ -179,6 +193,28 @@ function buildStatic() {
     addDashes(WORLD_W / 2, sz, true);
   }
 
+  // solid white edge lines so every street reads as lanes, not bare asphalt
+  const edgeMat = new THREE.MeshBasicMaterial({
+    color: 0xdfe6ee, transparent: true, opacity: 0.5, depthWrite: false,
+  });
+  const edgeOff = STREET_W / 2 - 3;
+  for (const sx of vStreets) {
+    for (const s of [-1, 1]) {
+      const e = new THREE.Mesh(new THREE.PlaneGeometry(1.6, WORLD_H), edgeMat);
+      e.rotation.x = -Math.PI / 2;
+      e.position.set(sx + s * edgeOff, 0.2, WORLD_H / 2);
+      scene.add(e);
+    }
+  }
+  for (const sz of hStreets) {
+    for (const s of [-1, 1]) {
+      const e = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_W, 1.6), edgeMat);
+      e.rotation.x = -Math.PI / 2;
+      e.position.set(WORLD_W / 2, 0.2, sz + s * edgeOff);
+      scene.add(e);
+    }
+  }
+
   // buildings
   const sideMats = [
     new THREE.MeshLambertMaterial({ map: buildingTexture("#232a3d", 0.45) }),
@@ -193,15 +229,15 @@ function buildStatic() {
     scene.add(mesh);
   }
 
-  // NYC DOT-standard cobra-head streetlights: staggered sides, every other block,
+  // NYC DOT-standard cobra-head streetlights: staggered sides, every block,
   // warm sodium-vapor glow like the real city at night
   const poleGeo = new THREE.CylinderGeometry(1.1, 1.5, 46, 6);
   const armGeo = new THREE.BoxGeometry(16, 1.6, 1.6);
   const headGeo = new THREE.BoxGeometry(7, 2.2, 3.2);
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xffa64d });
-  const poolGeo = new THREE.CircleGeometry(40, 18);
+  const poolGeo = new THREE.CircleGeometry(46, 18);
   const poolMat = new THREE.MeshBasicMaterial({
-    color: 0xff9a3c, transparent: true, opacity: 0.10,
+    color: 0xff9a3c, transparent: true, opacity: 0.15,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   function cobraHead(px, pz, armDirX, armDirZ) {
@@ -221,14 +257,14 @@ function buildStatic() {
     pool.position.set(hx, 0.4, hz); scene.add(pool);
   }
   for (let i = 0; i < vStreets.length; i++) {
-    for (let j = 0; j < hStreets.length - 1; j += 2) {
+    for (let j = 0; j < hStreets.length - 1; j++) {
       const side = ((i + j) % 2 === 0) ? 1 : -1;
       cobraHead(vStreets[i] + side * (STREET_W / 2 + 7),
         (hStreets[j] + hStreets[j + 1]) / 2, -side, 0);
     }
   }
   for (let j = 0; j < hStreets.length; j++) {
-    for (let i = 0; i < vStreets.length - 1; i += 2) {
+    for (let i = 0; i < vStreets.length - 1; i++) {
       const side = ((i + j) % 2 === 0) ? 1 : -1;
       cobraHead((vStreets[i] + vStreets[i + 1]) / 2,
         hStreets[j] + side * (STREET_W / 2 + 7), 0, -side);
@@ -280,6 +316,27 @@ function buildSignals() {
       const vLamp = new THREE.Mesh(new THREE.SphereGeometry(2.2, 8, 8), vMat);
       vLamp.position.set(px, 35, pz); scene.add(vLamp);
       lightHeads.push({ n, hMat, vMat, lastPhase: "" });
+
+      // zebra crosswalks on all four sides of signalized intersections
+      const cwOff = STREET_W / 2 - 8, cwDepth = 14;
+      const cwMatX = new THREE.MeshBasicMaterial({
+        map: crosswalkTexture(true), transparent: true, depthWrite: false,
+      });
+      cwMatX.map.repeat.set(1, 2);
+      const cwMatZ = new THREE.MeshBasicMaterial({
+        map: crosswalkTexture(false), transparent: true, depthWrite: false,
+      });
+      cwMatZ.map.repeat.set(2, 1);
+      for (const s of [-1, 1]) {
+        const cwV = new THREE.Mesh(new THREE.PlaneGeometry(STREET_W, cwDepth), cwMatX);
+        cwV.rotation.x = -Math.PI / 2;
+        cwV.position.set(n.x, 0.3, n.z + s * cwOff);
+        scene.add(cwV);
+        const cwH = new THREE.Mesh(new THREE.PlaneGeometry(cwDepth, STREET_W), cwMatZ);
+        cwH.rotation.x = -Math.PI / 2;
+        cwH.position.set(n.x + s * cwOff, 0.3, n.z);
+        scene.add(cwH);
+      }
     }
   }
 }
