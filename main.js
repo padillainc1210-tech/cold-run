@@ -33,7 +33,7 @@ function beep(freq, dur, type = "sine", vol = 0.12) {
 
 /* ---------------- city data (x right, z down-map) ---------------- */
 const WORLD_W = 2600, WORLD_H = 1800;
-const BLOCK = 190, STREET_W = 52, SHIFT_LEN = 180;
+const BLOCK = 190, STREET_W = 78, SHIFT_LEN = 180;
 // NYC DOT-style signal timing: 9s green, 3s amber, 2s all-red clearance per phase
 const LIGHT_PERIOD = 28, GREEN_T = 9, YELLOW_T = 3, ALLRED_T = 2;
 
@@ -529,11 +529,11 @@ function spawnCar() {
     mesh: free,
   };
   if (vertical) {
-    car.x = vStreets[(Math.random() * vStreets.length) | 0] + (Math.random() < 0.5 ? -13 : 13);
+    car.x = vStreets[(Math.random() * vStreets.length) | 0] + (Math.random() < 0.5 ? -20 : 20);
     car.z = Math.random() * WORLD_H;
   } else {
     car.x = Math.random() * WORLD_W;
-    car.z = hStreets[(Math.random() * hStreets.length) | 0] + (Math.random() < 0.5 ? -13 : 13);
+    car.z = hStreets[(Math.random() * hStreets.length) | 0] + (Math.random() < 0.5 ? -20 : 20);
   }
   free.group.visible = true;
   cars.push(car);
