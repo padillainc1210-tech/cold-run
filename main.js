@@ -11,6 +11,7 @@ const $ = (id) => document.getElementById(id);
 const sceneCanvas = $("scene"), mmCanvas = $("minimap"), mmCtx = mmCanvas.getContext("2d");
 const hudTime = $("hudTime"), hudScore = $("hudScore"), hudCounts = $("hudCounts");
 const deliveriesEl = $("deliveries"), compassArrow = $("compassArrow"), compassDist = $("compassDist");
+const locEl = $("loc");
 const cargoBar = $("cargoBar");
 const speedo = $("speedo"), honkBtn = $("honkBtn"), flashEl = $("flash"), hintEl = $("hint");
 const menuEl = $("menu"), overEl = $("over"), overStats = $("overStats");
@@ -33,16 +34,20 @@ function beep(freq, dur, type = "sine", vol = 0.12) {
 
 /* ---------------- city data (x right, z down-map) ---------------- */
 const WORLD_W = 2600, WORLD_H = 1800;
-const BLOCK = 190, STREET_W = 78, SHIFT_LEN = 180;
+// Midtown Manhattan grid: avenues run north-south, streets east-west.
+// Real Manhattan blocks run long east-west, so avenues sit ~2x as far apart as streets.
+const AVE_GAP = 380, ST_GAP = 190, STREET_W = 78, SHIFT_LEN = 180;
+const AVE_NAMES = ["5th Ave", "6th Ave", "7th Ave", "8th Ave", "9th Ave", "10th Ave"];
+const ST_NAMES = ["W 34th St", "W 36th St", "W 38th St", "W 40th St", "W 42nd St", "W 44th St", "W 46th St", "W 48th St", "W 50th St"];
 // NYC DOT-style signal timing: 9s green, 3s amber, 2s all-red clearance per phase
 const LIGHT_PERIOD = 28, GREEN_T = 9, YELLOW_T = 3, ALLRED_T = 2;
 
 let vStreets = [], hStreets = [], intersections = [], blocks = [];
 function buildCityData() {
-  const ox = (WORLD_W % BLOCK) / 2 + BLOCK / 2;
-  const oy = (WORLD_H % BLOCK) / 2 + BLOCK / 2;
-  for (let x = ox; x < WORLD_W; x += BLOCK) vStreets.push(x);
-  for (let y = oy; y < WORLD_H; y += BLOCK) hStreets.push(y);
+  const ox = (WORLD_W % AVE_GAP) / 2 + AVE_GAP / 2;
+  const oy = (WORLD_H % ST_GAP) / 2 + ST_GAP / 2;
+  for (let x = ox; x < WORLD_W; x += AVE_GAP) vStreets.push(x);
+  for (let y = oy; y < WORLD_H; y += ST_GAP) hStreets.push(y);
   for (let i = 0; i < vStreets.length; i++)
     for (let j = 0; j < hStreets.length; j++) {
       const m = (i + j) % 4;
@@ -523,17 +528,26 @@ function spawnCar() {
   if (!free || cars.length >= MAX_CARS) return;
   const vertical = Math.random() < 0.5;
   const cruise = (100 + Math.random() * 120) * (1 + elapsed / 300);
+  // Manhattan one-way: avenues and streets alternate direction by index
+  let lane, dir;
+  if (vertical) {
+    const vi = (Math.random() * vStreets.length) | 0;
+    lane = vStreets[vi]; dir = vi % 2 === 0 ? 1 : -1;
+  } else {
+    const hi = (Math.random() * hStreets.length) | 0;
+    lane = hStreets[hi]; dir = hi % 2 === 0 ? 1 : -1;
+  }
   const car = {
-    vertical, dir: Math.random() < 0.5 ? 1 : -1,
+    vertical, dir,
     cruise, speed: cruise, waitT: 0, stopKey: "",
     mesh: free,
   };
   if (vertical) {
-    car.x = vStreets[(Math.random() * vStreets.length) | 0] + (Math.random() < 0.5 ? -20 : 20);
+    car.x = lane + (Math.random() < 0.5 ? -20 : 20);
     car.z = Math.random() * WORLD_H;
   } else {
     car.x = Math.random() * WORLD_W;
-    car.z = hStreets[(Math.random() * hStreets.length) | 0] + (Math.random() < 0.5 ? -20 : 20);
+    car.z = lane + (Math.random() < 0.5 ? -20 : 20);
   }
   free.group.visible = true;
   cars.push(car);
@@ -1001,6 +1015,7 @@ function updateCamera(dt) {
 /* ---------------- HUD / minimap / compass ---------------- */
 let lastStopVersion = -1;
 let dstopRefs = [];
+let lastLoc = "";
 function updateHUD() {
   const mm = String(Math.floor(timeLeft / 60)).padStart(1, "0");
   const ss = String(Math.floor(timeLeft % 60)).padStart(2, "0");
@@ -1041,6 +1056,19 @@ function updateHUD() {
     compassDist.textContent = `${Math.round(bd / 10) * 10}m`;
   }
 
+  // Manhattan location readout: nearest avenue & street
+  let vi = 0, vbd = Infinity;
+  for (let i = 0; i < vStreets.length; i++) {
+    const d = Math.abs(vStreets[i] - player.x);
+    if (d < vbd) { vbd = d; vi = i; }
+  }
+  let hi = 0, hbd = Infinity;
+  for (let j = 0; j < hStreets.length; j++) {
+    const d = Math.abs(hStreets[j] - player.z);
+    if (d < hbd) { hbd = d; hi = j; }
+  }
+  const locStr = `📍 ${(AVE_NAMES[vi] || "Ave")} & ${(ST_NAMES[hi] || "St")}`;
+  if (locStr !== lastLoc) { lastLoc = locStr; locEl.textContent = locStr; }
   speedo.innerHTML = `${Math.round(Math.abs(player.speed) * 0.22)} <small>mph</small><span id="gear">${gearFor(player.speed)}</span>`;
 
   // cargo meter: full bar = planted, empty = skittish
