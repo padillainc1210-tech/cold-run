@@ -180,12 +180,52 @@ function processMapData(m) {
   const manhattanRoot = find(tsNode);
   const nodeLand = new Uint8Array(nNodes);
   for (let n = 0; n < nNodes; n++) nodeLand[n] = find(n) === manhattanRoot ? 1 : 0;
+  // LES buildings: oriented bounding boxes from real footprints
+  // (map.json "buildings" layer, Lower East Side only). Footprints stay
+  // at true map scale; heights use the game's stylized vertical (old
+  // grid buildings ran 40–135 units, lamp poles are 46) so a tenement
+  // reads next to cars and poles instead of vanishing under them.
+  const buildings = [];
+  for (const b of (m.buildings || [])) {
+    const pts = b.p;
+    if (!pts || pts.length < 4) continue;
+    let sx = 0, sz = 0, n = 0;
+    for (let i = 0; i < pts.length; i++) {
+      // skip a duplicated closing point
+      if (i === pts.length - 1 && pts[i][0] === pts[0][0] && pts[i][1] === pts[0][1]) continue;
+      sx += pts[i][0]; sz += pts[i][1]; n++;
+    }
+    if (n < 3) continue;
+    const ccx = sx / n, ccz = sz / n;
+    // longest edge sets the box orientation
+    let bestLen = -1, bx = 1, bz = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const dx = pts[i + 1][0] - pts[i][0], dz = pts[i + 1][1] - pts[i][1];
+      const l2 = dx * dx + dz * dz;
+      if (l2 > bestLen) { bestLen = l2; bx = dx; bz = dz; }
+    }
+    const bl = Math.sqrt(bestLen) || 1;
+    const ux = bx / bl, uz = bz / bl;
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const dx = pts[i][0] - ccx, dz = pts[i][1] - ccz;
+      const u = dx * ux + dz * uz, v = -dx * uz + dz * ux;
+      if (u < minU) minU = u; if (u > maxU) maxU = u;
+      if (v < minV) minV = v; if (v > maxV) maxV = v;
+    }
+    const w = Math.max(4, maxU - minU), d = Math.max(4, maxV - minV);
+    const mu = (minU + maxU) / 2, mv = (minV + maxV) / 2;
+    buildings.push({
+      cx: ccx + mu * ux - mv * uz, cz: ccz + mu * uz + mv * ux,
+      w, d, rot: Math.atan2(uz, ux), h: b.h || 55,
+    });
+  }
   return {
     minX, minZ, W, H, cx: minX + W / 2, cz: minZ + H / 2,
     nodeX, nodeZ, edgeA, edgeB, edgeRoad, edgeLen, edgeUX, edgeUZ,
     adjOff, adjList, nodeSignal, signals,
     roadName, roadCls, roadOne, roadStreet, roadCross, nodeLand, manhattanRoot,
-    hash,
+    hash, buildings,
   };
 }
 
@@ -414,6 +454,15 @@ function buildGroundTexture() {
   const width = (cls) => (cls === "motorway" || cls === "trunk") ? 6.5 :
     cls === "primary" ? 4.7 : cls === "secondary" ? 3.9 : cls === "tertiary" ? 3.2 : 2.6;
   const roads = RAW.roads.filter((r) => DRIVABLE.has(r.c)).sort((a, b) => rank(a.c) - rank(b.c));
+  // Asphalt bed under every drivable road: a dark ribbon wider than the
+  // colored centerline, so streets read as surfaces (with a curb edge)
+  // instead of bare lines when viewed from the driver's seat.
+  for (const r of roads) {
+    g.strokeStyle = "#232a38"; g.lineWidth = width(r.c) + 2.5;
+    g.beginPath();
+    r.p.forEach(([x, z], i) => (i ? g.lineTo(sx(x), sz(z)) : g.moveTo(sx(x), sz(z))));
+    g.stroke();
+  }
   for (const r of roads) {
     g.strokeStyle = color(r.c); g.lineWidth = width(r.c);
     g.beginPath();
@@ -428,19 +477,45 @@ function buildGroundTexture() {
 }
 
 function buildLampSpots() {
+  // Walk whole major roads, not individual segments: most Manhattan
+  // segments are a single short block, so the old per-segment filter
+  // (length >= 60, first lamp at 85) yielded only ~55 lamps for the
+  // whole island. One lamp every 170 units along each
+  // primary/secondary/tertiary road, sides alternating per lamp.
+  // Pole at the CURB, 15 units off the centerline; the arm reaches
+  // only 8 units back toward the road, so the head and glow pool hang
+  // ~7 units off the centerline, over the roadway edge — NOT on the
+  // centerline (the old 15-unit arm put head and glow dead center in
+  // the street, which is what the player reported).
   const MAJOR_ROAD = new Set(["primary", "secondary", "tertiary"]);
+  const STEP = 170;
   const spots = [];
-  for (let e = 0; e < M.edgeA.length; e++) {
-    if (!MAJOR_ROAD.has(M.roadCls[M.edgeRoad[e]])) continue;
-    const len = M.edgeLen[e];
-    if (len < 60) continue;
-    const a = M.edgeA[e];
-    const ux = M.edgeUX[e], uz = M.edgeUZ[e];
-    const side = (e % 2 === 0) ? 1 : -1;
-    for (let d = 85; d < len - 20; d += 170) {
-      const bx = M.nodeX[a] + ux * d, bz = M.nodeZ[a] + uz * d;
-      spots.push({ x: bx - uz * side * 15, z: bz + ux * side * 15, ax: uz * side, az: -ux * side });
+  let i = 0;
+  while (i < M.edgeA.length) {
+    const road = M.edgeRoad[i];
+    // this road's edges are contiguous and in polyline order
+    // (processMapData pushes them road by road)
+    let j = i;
+    while (j < M.edgeA.length && M.edgeRoad[j] === road) j++;
+    if (MAJOR_ROAD.has(M.roadCls[road])) {
+      let acc = 0; // distance along the road at the start of edge e
+      let nextAt = STEP / 2;
+      let side = 1;
+      for (let e = i; e < j; e++) {
+        const len = M.edgeLen[e];
+        const a = M.edgeA[e];
+        const ux = M.edgeUX[e], uz = M.edgeUZ[e];
+        while (nextAt < acc + len) {
+          const adv = nextAt - acc;
+          const bx = M.nodeX[a] + ux * adv, bz = M.nodeZ[a] + uz * adv;
+          spots.push({ x: bx - uz * side * 15, z: bz + ux * side * 15, ax: uz * side, az: -ux * side });
+          side = -side;
+          nextAt += STEP;
+        }
+        acc += len;
+      }
     }
+    i = j;
   }
   return spots;
 }
@@ -466,7 +541,7 @@ function buildStatic() {
   // cobra-head streetlight pool, recycled to the spots nearest the player
   // (full 3D lamps for the whole island would be ~10k meshes).
   const poleGeo = new THREE.CylinderGeometry(1.1, 1.5, 46, 6);
-  const armGeo = new THREE.BoxGeometry(16, 1.6, 1.6);
+  const armGeo = new THREE.BoxGeometry(8, 1.6, 1.6);
   const headGeo = new THREE.BoxGeometry(7, 2.2, 3.2);
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xffa64d });
   const poolGeo = new THREE.CircleGeometry(46, 18);
@@ -490,6 +565,40 @@ function buildStatic() {
     scene.add(grp);
     lampPool.push({ grp, arm, head, pool });
   }
+  buildBuildings();
+}
+
+// LES buildings: real footprints as instanced boxes (2 draw calls for
+// the whole neighborhood). Walls get varied brick facade colors; a thin
+// dark slab on top reads as the roof. Visual only — no collision; the
+// off-street slowdown already keeps you on the roads.
+const FACADE = [0x7a4a3a, 0x8a5a44, 0x6e4a3f, 0x7d6a55, 0x5d5a55,
+  0x8c7a5e, 0x74463c, 0x635049, 0x6b5a48, 0x59524a];
+function buildBuildings() {
+  const list = M.buildings || [];
+  if (!list.length) return;
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  boxGeo.translate(0, 0.5, 0); // scale y=h => base sits on the ground
+  const walls = new THREE.InstancedMesh(boxGeo,
+    new THREE.MeshLambertMaterial({ color: 0xffffff }), list.length);
+  const roofs = new THREE.InstancedMesh(boxGeo,
+    new THREE.MeshLambertMaterial({ color: 0x14161c }), list.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  const pos = new THREE.Vector3(), scl = new THREE.Vector3(), col = new THREE.Color();
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    q.setFromAxisAngle(up, -b.rot); // three.js -y rotation maps local +x to (cos, sin) in (x, z)
+    pos.set(b.cx, 0, b.cz); scl.set(b.w, b.h, b.d);
+    m4.compose(pos, q, scl); walls.setMatrixAt(i, m4);
+    col.setHex(FACADE[Math.abs(Math.round(b.cx * 7 + b.cz * 13)) % FACADE.length]);
+    walls.setColorAt(i, col);
+    pos.set(b.cx, b.h, b.cz); scl.set(b.w, 1.2, b.d);
+    m4.compose(pos, q, scl); roofs.setMatrixAt(i, m4);
+  }
+  walls.instanceMatrix.needsUpdate = true;
+  if (walls.instanceColor) walls.instanceColor.needsUpdate = true;
+  roofs.instanceMatrix.needsUpdate = true;
+  scene.add(walls); scene.add(roofs);
 }
 
 // Signal pool: only the ~20 signalized crossings nearest the player
@@ -549,11 +658,11 @@ function refreshLamps() {
     L.grp.visible = true;
     L.grp.position.set(s.x, 0, s.z);
     const rot = Math.atan2(-s.az, s.ax);
-    L.arm.position.set(s.ax * 8, 45, s.az * 8);
+    L.arm.position.set(s.ax * 4, 45, s.az * 4);
     L.arm.rotation.y = rot;
-    L.head.position.set(s.ax * 15, 44, s.az * 15);
+    L.head.position.set(s.ax * 8, 44, s.az * 8);
     L.head.rotation.y = rot;
-    L.pool.position.set(s.ax * 15, 0.4, s.az * 15);
+    L.pool.position.set(s.ax * 8, 0.4, s.az * 8);
   }
 }
 function refreshSignals() {
@@ -571,7 +680,9 @@ function refreshSignals() {
     S.grp.visible = true;
     S.sig = cand[i].sig;
     S.lastPhase = "";
-    S.grp.position.set(S.sig.x, 0, S.sig.z);
+    // Pole at the intersection corner, not dead-center in the crossing:
+    // offset perpendicular to the signal's road axis.
+    S.grp.position.set(S.sig.x - S.sig.az * 16, 0, S.sig.z + S.sig.ax * 16);
   }
 }
 
@@ -689,9 +800,10 @@ function resetGame() {
   elapsed = 0; stopVersion++;
   lunchDone = false; lunchTimer = 0;
   hitCooldown = 0; ticketCooldown = 0; flashTimer = 0;
-  // spawn on a real street near Times Square, facing along the road
-  const spawn = pickEdgeNear(M, -650, 1200, 0, 600, true, true) ||
-    pickEdgeNear(M, -650, 1200, 0, 3000, true, false);
+  // spawn on a real street in the Lower East Side (Delancey/Orchard
+  // area — the improved neighborhood), facing along the road
+  const spawn = pickEdgeNear(M, -780, 3400, 0, 600, true, true) ||
+    pickEdgeNear(M, -780, 3400, 0, 3000, true, false);
   if (spawn) {
     player.x = spawn.x; player.z = spawn.z;
     const one = M.roadOne[M.edgeRoad[spawn.edge]];
@@ -1325,7 +1437,7 @@ async function initMap() {
     // the menu copy in index.html still describes the old grid — fix it live
     for (const p of menuEl.querySelectorAll("p")) {
       if (p.textContent.includes("Midtown Manhattan grid")) {
-        p.textContent = "🗽 Real Manhattan — every street from OpenStreetMap, with real one-ways and signals.";
+        p.textContent = "🗽 Real Manhattan — starting in the Lower East Side, with real one-ways and signals.";
       }
     }
     loop();
