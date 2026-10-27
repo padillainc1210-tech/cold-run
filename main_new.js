@@ -482,9 +482,9 @@ function buildLampSpots() {
   // (length >= 60, first lamp at 85) yielded only ~55 lamps for the
   // whole island. One lamp every 170 units along each
   // primary/secondary/tertiary road, sides alternating per lamp.
-  // Pole at the CURB, 15 units off the centerline; the arm reaches
-  // only 8 units back toward the road, so the head and glow pool hang
-  // ~7 units off the centerline, over the roadway edge — NOT on the
+  // Pole at the CURB, 24/22/20 units off the centerline (primary/secondary/tertiary; 7 clear of the asphalt edge); the arm reaches
+  // only 9 units back toward the road, so the head and glow pool hang
+  // 15/13/11 units off the centerline, over the roadway edge — NOT on the
   // centerline (the old 15-unit arm put head and glow dead center in
   // the street, which is what the player reported).
   const MAJOR_ROAD = new Set(["primary", "secondary", "tertiary"]);
@@ -507,8 +507,8 @@ function buildLampSpots() {
         const ux = M.edgeUX[e], uz = M.edgeUZ[e];
         while (nextAt < acc + len) {
           const adv = nextAt - acc;
-          const bx = M.nodeX[a] + ux * adv, bz = M.nodeZ[a] + uz * adv;
-          spots.push({ x: bx - uz * side * 15, z: bz + ux * side * 15, ax: uz * side, az: -ux * side });
+          const bx = M.nodeX[a] + ux * adv, bz = M.nodeZ[a] + uz * adv; const poleOff = M.roadCls[road] === "primary" ? 24 : M.roadCls[road] === "secondary" ? 22 : 20;
+          spots.push({ x: bx - uz * side * poleOff, z: bz + ux * side * poleOff, ax: uz * side, az: -ux * side, arm: 9 });
           side = -side;
           nextAt += STEP;
         }
@@ -541,10 +541,10 @@ function buildStatic() {
   // cobra-head streetlight pool, recycled to the spots nearest the player
   // (full 3D lamps for the whole island would be ~10k meshes).
   const poleGeo = new THREE.CylinderGeometry(1.1, 1.5, 46, 6);
-  const armGeo = new THREE.BoxGeometry(8, 1.6, 1.6);
+  const armGeo = new THREE.BoxGeometry(9, 1.6, 1.6);
   const headGeo = new THREE.BoxGeometry(7, 2.2, 3.2);
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xffa64d });
-  const poolGeo = new THREE.CircleGeometry(46, 18);
+  const poolGeo = new THREE.CircleGeometry(10, 18);
   const poolMat = new THREE.MeshBasicMaterial({
     color: 0xff9a3c, transparent: true, opacity: 0.15,
     blending: THREE.AdditiveBlending, depthWrite: false,
@@ -658,11 +658,11 @@ function refreshLamps() {
     L.grp.visible = true;
     L.grp.position.set(s.x, 0, s.z);
     const rot = Math.atan2(-s.az, s.ax);
-    L.arm.position.set(s.ax * 4, 45, s.az * 4);
+    L.arm.position.set(s.ax * (s.arm || 9) / 2, 45, s.az * (s.arm || 9) / 2);
     L.arm.rotation.y = rot;
-    L.head.position.set(s.ax * 8, 44, s.az * 8);
+    L.head.position.set(s.ax * (s.arm || 9), 44, s.az * (s.arm || 9));
     L.head.rotation.y = rot;
-    L.pool.position.set(s.ax * 8, 0.4, s.az * 8);
+    L.pool.position.set(s.ax * (s.arm || 9), 0.4, s.az * (s.arm || 9));
   }
 }
 function refreshSignals() {
@@ -681,8 +681,8 @@ function refreshSignals() {
     S.sig = cand[i].sig;
     S.lastPhase = "";
     // Pole at the intersection corner, not dead-center in the crossing:
-    // offset perpendicular to the signal's road axis.
-    S.grp.position.set(S.sig.x - S.sig.az * 16, 0, S.sig.z + S.sig.ax * 16);
+    // offset 20 units along the signal axis and 20 units perpendicular, so the pole sits at the corner clear of both roads.
+    S.grp.position.set(S.sig.x + S.sig.ax * 20 - S.sig.az * 20, 0, S.sig.z + S.sig.az * 20 + S.sig.ax * 20);
   }
 }
 
