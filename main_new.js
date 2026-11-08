@@ -6,7 +6,7 @@
    not a procedural grid. See REALMAP_NOTES.md for how it works.
    Controls: ▲ gas · ▼ brake · ◀ ▶ steer · Space = honk
    Touch: on-screen pedals + steering.
-   NOTE: this file is NOT live yet. index.html still loads main.js.
+   Live: index.html loads this file (main_new.js?v=YYYYMMDDx).
    The deploy wiring is described in REALMAP_NOTES.md.
    ============================================================ */
 import * as THREE from "three";
@@ -243,7 +243,10 @@ function processMapData(m) {
     const mu = (minU + maxU) / 2, mv = (minV + maxV) / 2;
     buildings.push({
       cx: ccx + mu * ux - mv * uz, cz: ccz + mu * uz + mv * ux,
-      w, d, rot: Math.atan2(uz, ux), h: b.h || 55,
+      // half the map.json height: tenements at 55 units made every street
+      // a canyon (16-wide corridor, 55-tall walls). Halved, the skyline
+      // still reads as the LES but the streets open up.
+      w, d, rot: Math.atan2(uz, ux), h: Math.min(140, Math.max(15, (b.h || 55) * 0.5)),
     });
   }
   // Street clearance: push every building back so its FACE sits at least
@@ -254,7 +257,9 @@ function processMapData(m) {
   // Three passes so corner buildings clear both streets. Distance is
   // measured from the road point to the building's box, not its center —
   // a deep building's face can sit on the road while its center is far.
-  const SETBACK = 8;
+  // SETBACK was 8 on the first pass (Nov 8); the streets still read
+  // tight, so it went to 10 with the vehicle rescale below.
+  const SETBACK = 10;
   for (let iter = 0; iter < 3; iter++) {
     for (const b of buildings) {
       const near = nearestEdgePoint(b.cx, b.cz, 40 + Math.max(b.w, b.d) / 2);
@@ -468,7 +473,7 @@ scene.add(moon);
 const headlight = new THREE.SpotLight(0xffeecf, 120, 700, 0.48, 0.55, 1.4);
 scene.add(headlight);
 scene.add(headlight.target);
-const coneGeo = new THREE.ConeGeometry(45, 170, 20, 1, true);
+const coneGeo = new THREE.ConeGeometry(30, 120, 20, 1, true);
 coneGeo.rotateX(-Math.PI / 2); // apex toward -Z (the truck)
 const headCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
   color: 0xffedb8, transparent: true, opacity: 0.07,
@@ -670,8 +675,8 @@ function buildStatic() {
 
 // LES buildings: real footprints as instanced boxes (2 draw calls for
 // the whole neighborhood). Walls get varied brick facade colors; a thin
-// dark slab on top reads as the roof. Visual only — no collision; the
-// off-street slowdown already keeps you on the roads.
+// dark slab on top reads as the roof. Collision is handled separately
+// (collideBuildings, called from update): the boxes are solid.
 const FACADE = [0x7a4a3a, 0x8a5a44, 0x6e4a3f, 0x7d6a55, 0x5d5a55,
   0x8c7a5e, 0x74463c, 0x635049, 0x6b5a48, 0x59524a];
 function buildBuildings() {
@@ -791,37 +796,37 @@ const CAR_COLORS = [0xe74c3c, 0xf39c12, 0x8e44ad, 0x16a085, 0xd35400];
 function makeCarMesh(color) {
   const g = new THREE.Group();
   const bodyMat = new THREE.MeshLambertMaterial({ color });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 20), bodyMat);
-  body.position.y = 3.5; g.add(body);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(8, 3.5, 10),
+  const body = new THREE.Mesh(new THREE.BoxGeometry(5, 2.5, 10), bodyMat);
+  body.position.y = 2; g.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 5),
     new THREE.MeshLambertMaterial({ color: 0x9fc4d8 }));
-  cabin.position.set(0, 6.5, -1.5); g.add(cabin);
-  const wheelGeo = new THREE.CylinderGeometry(2, 2, 1.8, 10);
+  cabin.position.set(0, 3.5, -0.75); g.add(cabin);
+  const wheelGeo = new THREE.CylinderGeometry(1.2, 1.2, 1.2, 10);
   const wheelMat = new THREE.MeshLambertMaterial({ color: 0x0a0a0a });
-  for (const [wx, wz] of [[-5, 6.5], [5, 6.5], [-5, -6.5], [5, -6.5]]) {
+  for (const [wx, wz] of [[-2, 3.5], [2, 3.5], [-2, -3.5], [2, -3.5]]) {
     const w = new THREE.Mesh(wheelGeo, wheelMat);
     w.rotation.z = Math.PI / 2;
-    w.position.set(wx, 2, wz);
+    w.position.set(wx, 1.2, wz);
     g.add(w);
   }
   const hlMat = new THREE.MeshBasicMaterial({ color: 0xfff9c4 });
-  for (const hx of [-3, 3]) {
-    const hl = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 1), hlMat);
-    hl.position.set(hx, 3.5, 10.4); g.add(hl);
+  for (const hx of [-1.5, 1.5]) {
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.6), hlMat);
+    hl.position.set(hx, 2, 5.2); g.add(hl);
   }
   const tailMat = new THREE.MeshBasicMaterial({ color: 0x881111 });
-  for (const hx of [-3, 3]) {
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 1), tailMat);
-    tl.position.set(hx, 3.5, -10.4); g.add(tl);
+  for (const hx of [-1.5, 1.5]) {
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.6), tailMat);
+    tl.position.set(hx, 2, -5.2); g.add(tl);
   }
   // headlight beam glow
-  const beam = new THREE.Mesh(new THREE.PlaneGeometry(12, 22),
+  const beam = new THREE.Mesh(new THREE.PlaneGeometry(7, 12),
     new THREE.MeshBasicMaterial({
       color: 0xfff2b0, transparent: true, opacity: 0.10,
       blending: THREE.AdditiveBlending, depthWrite: false,
     }));
   beam.rotation.x = -Math.PI / 2;
-  beam.position.set(0, 0.6, 22);
+  beam.position.set(0, 0.6, 11);
   g.add(beam);
   return { group: g, tailMat };
 }
@@ -829,29 +834,32 @@ function makeCarMesh(color) {
 // The player's truck (third-person chase cam). Ice-box cargo in pale
 // blue-white, blue cab, slight emissive so it reads at night. Forward
 // is +z, same as the traffic cars (rotation.y = heading).
+// Rescaled Nov 8 (second pass): the first truck was 10 wide in a
+// 16-wide corridor, so it filled 62% of the street and the streets
+// still read tight. Now 5 wide in a 20-wide corridor (25% fill).
 function makeTruckMesh() {
   const g = new THREE.Group();
-  const cargo = new THREE.Mesh(new THREE.BoxGeometry(10, 7, 16),
+  const cargo = new THREE.Mesh(new THREE.BoxGeometry(5, 4, 7),
     new THREE.MeshLambertMaterial({ color: 0xdfe9f2, emissive: 0x2a3644 }));
-  cargo.position.set(0, 5, -3); g.add(cargo);
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(8, 5, 6),
+  cargo.position.set(0, 2.5, -1.5); g.add(cargo);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 3.5),
     new THREE.MeshLambertMaterial({ color: 0x2e86c1, emissive: 0x0e2a3d }));
-  cab.position.set(0, 4, 8); g.add(cab);
-  const shield = new THREE.Mesh(new THREE.BoxGeometry(7, 2, 0.6),
+  cab.position.set(0, 2, 3.75); g.add(cab);
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(3.5, 1.2, 0.6),
     new THREE.MeshLambertMaterial({ color: 0x0e141b }));
-  shield.position.set(0, 5, 11); g.add(shield);
-  const wheelGeo = new THREE.CylinderGeometry(2, 2, 1.8, 10);
+  shield.position.set(0, 2.5, 5.5); g.add(shield);
+  const wheelGeo = new THREE.CylinderGeometry(1.2, 1.2, 1.2, 10);
   const wheelMat = new THREE.MeshLambertMaterial({ color: 0x0a0a0a });
-  for (const [wx, wz] of [[-5, 7], [5, 7], [-5, -7], [5, -7]]) {
+  for (const [wx, wz] of [[-2, 3.5], [2, 3.5], [-2, -3.5], [2, -3.5]]) {
     const w = new THREE.Mesh(wheelGeo, wheelMat);
     w.rotation.z = Math.PI / 2;
-    w.position.set(wx, 2, wz);
+    w.position.set(wx, 1.2, wz);
     g.add(w);
   }
   const tailMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
-  for (const hx of [-4, 4]) {
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, 0.6), tailMat);
-    tl.position.set(hx, 4, -11.2); g.add(tl);
+  for (const hx of [-2, 2]) {
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.5), tailMat);
+    tl.position.set(hx, 2, -5.2); g.add(tl);
   }
   return { group: g };
 }
@@ -859,23 +867,23 @@ const truckMesh = makeTruckMesh();
 scene.add(truckMesh.group);
 function makePersonMesh(color) {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 7, 8),
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.4, 3.5, 8),
     new THREE.MeshLambertMaterial({ color }));
-  body.position.y = 4.5; g.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(1.7, 10, 10),
+  body.position.y = 2.25; g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.85, 10, 10),
     new THREE.MeshLambertMaterial({ color: 0xe8b88a }));
-  head.position.y = 9.6; g.add(head);
+  head.position.y = 4.8; g.add(head);
   return g;
 }
 function makeBeacon() {
   const g = new THREE.Group();
   const cubeMat = new THREE.MeshBasicMaterial({ color: 0x7fe7f2 });
-  const cube = new THREE.Mesh(new THREE.BoxGeometry(15, 15, 15), cubeMat);
-  cube.position.y = 24; g.add(cube);
+  const cube = new THREE.Mesh(new THREE.BoxGeometry(8, 8, 8), cubeMat);
+  cube.position.y = 12; g.add(cube);
   const ringMat = new THREE.MeshBasicMaterial({
     color: 0x7fe7f2, transparent: true, opacity: 0.8, side: THREE.DoubleSide,
   });
-  const ring = new THREE.Mesh(new THREE.RingGeometry(20, 30, 32), ringMat);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(10, 16, 32), ringMat);
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.6;
   g.add(ring);
@@ -1276,10 +1284,15 @@ function update(dt) {
   ticketCooldown = Math.max(0, ticketCooldown - dt);
   if (hitCooldown <= 0) {
     for (const c of cars) {
-      // box fits the rescaled cars (10 wide) and the lane offset: two-way
-      // passes clear by ~1 unit; the old ±26 box crashed on every pass
-      // because real-map streets are only 12–22 units wide
-      if (Math.abs(player.x - c.x) < 6 && Math.abs(player.z - c.z) < 6) {
+      // Oriented check in the car's frame: |along| < 9 (bumpers are ~10
+      // apart at contact) and |side| < 4.5 (a clean two-way pass is 7
+      // apart). The old axis-aligned box false-crashed on diagonal
+      // streets, where a 7-unit lateral gap reads as <6 in both axes.
+      const cux = M.edgeUX[c.edge] * c.dir, cuz = M.edgeUZ[c.edge] * c.dir;
+      const rx = player.x - c.x, rz = player.z - c.z;
+      const along = rx * cux + rz * cuz;
+      const side = -rx * cuz + rz * cux;
+      if (Math.abs(along) < 9 && Math.abs(side) < 4.5) {
         hitCooldown = 1.2;
         timeLeft = Math.max(0, timeLeft - 3);
         score = Math.max(0, score - 15);
@@ -1294,8 +1307,9 @@ function update(dt) {
   if (hitCooldown <= 0) {
     for (const p of pedestrians) {
       // peds walk the sidewalk at ±10 off the centerline; the old ±16 box
-      // clipped them from the middle of the street
-      if (Math.abs(player.x - p.x) < 8 && Math.abs(player.z - p.z) < 8) {
+      // clipped them from the middle of the street. Now ±4, matching
+      // the rescaled truck (5 wide) and peds (~1.4 radius).
+      if (Math.abs(player.x - p.x) < 4 && Math.abs(player.z - p.z) < 4) {
         hitCooldown = 1.2;
         timeLeft = Math.max(0, timeLeft - 2);
         flash("🚶 HEY! -2s", 1.2);
@@ -1404,9 +1418,9 @@ function update(dt) {
 
   // headlights follow the truck
   const hfx = Math.sin(player.heading), hfz = Math.cos(player.heading);
-  headlight.position.set(player.x + hfx * 20, 18, player.z + hfz * 20);
-  headlight.target.position.set(player.x + hfx * 300, 0, player.z + hfz * 300);
-  headCone.position.set(player.x + hfx * 85, 10, player.z + hfz * 85);
+  headlight.position.set(player.x + hfx * 10, 8, player.z + hfz * 10);
+  headlight.target.position.set(player.x + hfx * 200, 0, player.z + hfz * 200);
+  headCone.position.set(player.x + hfx * 60, 6, player.z + hfz * 60);
   headCone.rotation.y = player.heading;
 
   updateSignalLamps();
@@ -1419,8 +1433,8 @@ function update(dt) {
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 function updateCamera(dt) {
   const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
-  camPos.set(player.x - fx * 34, 19, player.z - fz * 34);
-  camLook.set(player.x + fx * 45, 4 + pitchSm, player.z + fz * 45);
+  camPos.set(player.x - fx * 22, 12, player.z - fz * 22);
+  camLook.set(player.x + fx * 35, 3 + pitchSm, player.z + fz * 35);
   camera.position.lerp(camPos, Math.min(1, dt * 8));
   const lookCur = new THREE.Vector3();
   camera.getWorldDirection(lookCur);
