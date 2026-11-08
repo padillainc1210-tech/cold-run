@@ -220,12 +220,26 @@ function processMapData(m) {
       w, d, rot: Math.atan2(uz, ux), h: b.h || 55,
     });
   }
+  // Spatial hash over building OBBs (cell 128) for the player push-out.
+  const bHash = new Map();
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    const r = Math.max(b.w, b.d) / 2 + 3;
+    const cx0 = Math.floor((b.cx - r) / HASH_CELL), cx1 = Math.floor((b.cx + r) / HASH_CELL);
+    const cz0 = Math.floor((b.cz - r) / HASH_CELL), cz1 = Math.floor((b.cz + r) / HASH_CELL);
+    for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+      const k = cx + "," + cz;
+      let arr = bHash.get(k);
+      if (!arr) { arr = []; bHash.set(k, arr); }
+      arr.push(i);
+    }
+  }
   return {
     minX, minZ, W, H, cx: minX + W / 2, cz: minZ + H / 2,
     nodeX, nodeZ, edgeA, edgeB, edgeRoad, edgeLen, edgeUX, edgeUZ,
     adjOff, adjList, nodeSignal, signals,
     roadName, roadCls, roadOne, roadStreet, roadCross, nodeLand, manhattanRoot,
-    hash, buildings,
+    hash, buildings, bHash,
   };
 }
 
@@ -308,6 +322,36 @@ function onStreetAt(M, x, z, thresh) {
     }
   }
   return false;
+}
+
+// Push the player point out of LES building footprints (oriented boxes).
+// Buildings used to be visual-only, so the truck drove straight through
+// tenements — that is what "hitting the buildings" was. Margin 3 keeps
+// the truck off the facades without wedging it on narrow streets.
+function collideBuildings(M, p, margin) {
+  const list = M.buildings;
+  if (!list.length || !M.bHash) return;
+  const cx = Math.floor(p.x / HASH_CELL), cz = Math.floor(p.z / HASH_CELL);
+  for (let ox = -1; ox <= 1; ox++) for (let oz = -1; oz <= 1; oz++) {
+    const arr = M.bHash.get((cx + ox) + "," + (cz + oz));
+    if (!arr) continue;
+    for (const i of arr) {
+      const b = list[i];
+      const cU = Math.cos(b.rot), sU = Math.sin(b.rot);
+      const dx = p.x - b.cx, dz = p.z - b.cz;
+      const u = dx * cU + dz * sU, v = -dx * sU + dz * cU;
+      const hw = b.w / 2 + margin, hd = b.d / 2 + margin;
+      if (Math.abs(u) >= hw || Math.abs(v) >= hd) continue;
+      const pu = hw - Math.abs(u), pv = hd - Math.abs(v);
+      if (pu < pv) {
+        const s = u >= 0 ? 1 : -1;
+        p.x += cU * s * pu; p.z += sU * s * pu;
+      } else {
+        const s = v >= 0 ? 1 : -1;
+        p.x += -sU * s * pv; p.z += cU * s * pv;
+      }
+    }
+  }
 }
 
 // Nearest named road, expanding search radii. "" when nothing is named.
@@ -482,9 +526,9 @@ function buildLampSpots() {
   // (length >= 60, first lamp at 85) yielded only ~55 lamps for the
   // whole island. One lamp every 170 units along each
   // primary/secondary/tertiary road, sides alternating per lamp.
-  // Pole at the CURB, 24/22/20 units off the centerline (primary/secondary/tertiary; 7 clear of the asphalt edge); the arm reaches
-  // only 9 units back toward the road, so the head and glow pool hang
-  // 15/13/11 units off the centerline, over the roadway edge — NOT on the
+  // Pole at the CURB, 15 units off the centerline; the arm reaches
+  // only 8 units back toward the road, so the head and glow pool hang
+  // ~7 units off the centerline, over the roadway edge — NOT on the
   // centerline (the old 15-unit arm put head and glow dead center in
   // the street, which is what the player reported).
   const MAJOR_ROAD = new Set(["primary", "secondary", "tertiary"]);
@@ -507,8 +551,8 @@ function buildLampSpots() {
         const ux = M.edgeUX[e], uz = M.edgeUZ[e];
         while (nextAt < acc + len) {
           const adv = nextAt - acc;
-          const bx = M.nodeX[a] + ux * adv, bz = M.nodeZ[a] + uz * adv; const poleOff = M.roadCls[road] === "primary" ? 24 : M.roadCls[road] === "secondary" ? 22 : 20;
-          spots.push({ x: bx - uz * side * poleOff, z: bz + ux * side * poleOff, ax: uz * side, az: -ux * side, arm: 9 });
+          const bx = M.nodeX[a] + ux * adv, bz = M.nodeZ[a] + uz * adv;
+          spots.push({ x: bx - uz * side * 15, z: bz + ux * side * 15, ax: uz * side, az: -ux * side });
           side = -side;
           nextAt += STEP;
         }
@@ -541,10 +585,10 @@ function buildStatic() {
   // cobra-head streetlight pool, recycled to the spots nearest the player
   // (full 3D lamps for the whole island would be ~10k meshes).
   const poleGeo = new THREE.CylinderGeometry(1.1, 1.5, 46, 6);
-  const armGeo = new THREE.BoxGeometry(9, 1.6, 1.6);
+  const armGeo = new THREE.BoxGeometry(8, 1.6, 1.6);
   const headGeo = new THREE.BoxGeometry(7, 2.2, 3.2);
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xffa64d });
-  const poolGeo = new THREE.CircleGeometry(10, 18);
+  const poolGeo = new THREE.CircleGeometry(46, 18);
   const poolMat = new THREE.MeshBasicMaterial({
     color: 0xff9a3c, transparent: true, opacity: 0.15,
     blending: THREE.AdditiveBlending, depthWrite: false,
@@ -658,11 +702,11 @@ function refreshLamps() {
     L.grp.visible = true;
     L.grp.position.set(s.x, 0, s.z);
     const rot = Math.atan2(-s.az, s.ax);
-    L.arm.position.set(s.ax * (s.arm || 9) / 2, 45, s.az * (s.arm || 9) / 2);
+    L.arm.position.set(s.ax * 4, 45, s.az * 4);
     L.arm.rotation.y = rot;
-    L.head.position.set(s.ax * (s.arm || 9), 44, s.az * (s.arm || 9));
+    L.head.position.set(s.ax * 8, 44, s.az * 8);
     L.head.rotation.y = rot;
-    L.pool.position.set(s.ax * (s.arm || 9), 0.4, s.az * (s.arm || 9));
+    L.pool.position.set(s.ax * 8, 0.4, s.az * 8);
   }
 }
 function refreshSignals() {
@@ -681,8 +725,8 @@ function refreshSignals() {
     S.sig = cand[i].sig;
     S.lastPhase = "";
     // Pole at the intersection corner, not dead-center in the crossing:
-    // offset 20 units along the signal axis and 20 units perpendicular, so the pole sits at the corner clear of both roads.
-    S.grp.position.set(S.sig.x + S.sig.ax * 20 - S.sig.az * 20, 0, S.sig.z + S.sig.az * 20 + S.sig.ax * 20);
+    // offset perpendicular to the signal's road axis.
+    S.grp.position.set(S.sig.x - S.sig.az * 16, 0, S.sig.z + S.sig.ax * 16);
   }
 }
 
@@ -691,37 +735,37 @@ const CAR_COLORS = [0xe74c3c, 0xf39c12, 0x8e44ad, 0x16a085, 0xd35400];
 function makeCarMesh(color) {
   const g = new THREE.Group();
   const bodyMat = new THREE.MeshLambertMaterial({ color });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(15, 6, 30), bodyMat);
-  body.position.y = 5; g.add(body);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(13, 5, 14),
+  const body = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 20), bodyMat);
+  body.position.y = 3.5; g.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(8, 3.5, 10),
     new THREE.MeshLambertMaterial({ color: 0x9fc4d8 }));
-  cabin.position.set(0, 10, -2); g.add(cabin);
-  const wheelGeo = new THREE.CylinderGeometry(3, 3, 2.4, 10);
+  cabin.position.set(0, 6.5, -1.5); g.add(cabin);
+  const wheelGeo = new THREE.CylinderGeometry(2, 2, 1.8, 10);
   const wheelMat = new THREE.MeshLambertMaterial({ color: 0x0a0a0a });
-  for (const [wx, wz] of [[-8, 10], [8, 10], [-8, -10], [8, -10]]) {
+  for (const [wx, wz] of [[-5, 6.5], [5, 6.5], [-5, -6.5], [5, -6.5]]) {
     const w = new THREE.Mesh(wheelGeo, wheelMat);
     w.rotation.z = Math.PI / 2;
-    w.position.set(wx, 3, wz);
+    w.position.set(wx, 2, wz);
     g.add(w);
   }
   const hlMat = new THREE.MeshBasicMaterial({ color: 0xfff9c4 });
-  for (const hx of [-5, 5]) {
-    const hl = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 1), hlMat);
-    hl.position.set(hx, 5, 15.4); g.add(hl);
+  for (const hx of [-3, 3]) {
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 1), hlMat);
+    hl.position.set(hx, 3.5, 10.4); g.add(hl);
   }
   const tailMat = new THREE.MeshBasicMaterial({ color: 0x881111 });
-  for (const hx of [-5, 5]) {
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 1), tailMat);
-    tl.position.set(hx, 5, -15.4); g.add(tl);
+  for (const hx of [-3, 3]) {
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 1), tailMat);
+    tl.position.set(hx, 3.5, -10.4); g.add(tl);
   }
   // headlight beam glow
-  const beam = new THREE.Mesh(new THREE.PlaneGeometry(20, 34),
+  const beam = new THREE.Mesh(new THREE.PlaneGeometry(12, 22),
     new THREE.MeshBasicMaterial({
       color: 0xfff2b0, transparent: true, opacity: 0.10,
       blending: THREE.AdditiveBlending, depthWrite: false,
     }));
   beam.rotation.x = -Math.PI / 2;
-  beam.position.set(0, 0.6, 32);
+  beam.position.set(0, 0.6, 22);
   g.add(beam);
   return { group: g, tailMat };
 }
@@ -930,6 +974,11 @@ function updateCar(car, dt) {
   const ux = M.edgeUX[car.edge], uz = M.edgeUZ[car.edge];
   car.x = M.nodeX[a] + ux * car.dist;
   car.z = M.nodeZ[a] + uz * car.dist;
+  // keep right: 3.5 units to the car's right, so two-way streets have
+  // room to pass (cars used to run dead-center, which on real-map
+  // streets left no gap at all — right is (-fz, fx) for forward (fx, fz))
+  car.x += -uz * car.dir * 3.5;
+  car.z += ux * car.dir * 3.5;
   car.mesh.group.rotation.y = Math.atan2(ux * car.dir, uz * car.dir);
   car.mesh.group.position.set(car.x, 0, car.z);
   car.mesh.tailMat.color.setHex(car.speed < 4 ? 0xff2222 : 0x881111);
@@ -1094,6 +1143,9 @@ function update(dt) {
     player.vz += (fz * player.speed - player.vz) * gk;
     player.x += player.vx * dt;
     player.z += player.vz * dt;
+    // buildings are solid now — slide along facades instead of driving
+    // straight through tenements (see collideBuildings)
+    collideBuildings(M, player, 3);
     player.x = Math.max(M.minX + 20, Math.min(M.minX + M.W - 20, player.x));
     player.z = Math.max(M.minZ + 20, Math.min(M.minZ + M.H - 20, player.z));
 
@@ -1133,7 +1185,10 @@ function update(dt) {
   ticketCooldown = Math.max(0, ticketCooldown - dt);
   if (hitCooldown <= 0) {
     for (const c of cars) {
-      if (Math.abs(player.x - c.x) < 26 && Math.abs(player.z - c.z) < 26) {
+      // box fits the rescaled cars (10 wide) and the lane offset: two-way
+      // passes clear by ~1 unit; the old ±26 box crashed on every pass
+      // because real-map streets are only 12–22 units wide
+      if (Math.abs(player.x - c.x) < 6 && Math.abs(player.z - c.z) < 6) {
         hitCooldown = 1.2;
         timeLeft = Math.max(0, timeLeft - 3);
         score = Math.max(0, score - 15);
@@ -1147,7 +1202,9 @@ function update(dt) {
   }
   if (hitCooldown <= 0) {
     for (const p of pedestrians) {
-      if (Math.abs(player.x - p.x) < 16 && Math.abs(player.z - p.z) < 16) {
+      // peds walk the sidewalk at ±10 off the centerline; the old ±16 box
+      // clipped them from the middle of the street
+      if (Math.abs(player.x - p.x) < 8 && Math.abs(player.z - p.z) < 8) {
         hitCooldown = 1.2;
         timeLeft = Math.max(0, timeLeft - 2);
         flash("🚶 HEY! -2s", 1.2);
@@ -1272,8 +1329,8 @@ const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 let hoodAdded = false;
 function updateCamera(dt) {
   const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
-  camPos.set(player.x - fx * 38, 17, player.z - fz * 38);
-  camLook.set(player.x + fx * 75, 5 + pitchSm, player.z + fz * 75);
+  camPos.set(player.x - fx * 20, 10, player.z - fz * 20);
+  camLook.set(player.x + fx * 50, 5 + pitchSm, player.z + fz * 50);
   camera.position.lerp(camPos, Math.min(1, dt * 8));
   const lookCur = new THREE.Vector3();
   camera.getWorldDirection(lookCur);
@@ -1288,14 +1345,14 @@ function updateCamera(dt) {
 
   if (!hoodAdded) {
     hoodAdded = true;
-    const hood = new THREE.Mesh(new THREE.BoxGeometry(34, 9, 30),
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(20, 9, 30),
       new THREE.MeshLambertMaterial({ color: 0x1c2733 }));
-    hood.position.set(0, -8.5, -16);
+    hood.position.set(0, -5.5, -16);
     camera.add(hood);
     // side mirrors
     const mirMat = new THREE.MeshLambertMaterial({ color: 0x0e141b });
-    for (const mx of [-19, 19]) {
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(6, 1.5, 1.5), mirMat);
+    for (const mx of [-11, 11]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(4, 1.5, 1.5), mirMat);
       arm.position.set(mx, -2, -14);
       camera.add(arm);
       const mir = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 1), mirMat);
