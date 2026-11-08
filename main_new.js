@@ -1,6 +1,7 @@
 /* ============================================================
    COLD RUN 3D — Ice Delivery, REAL MANHATTAN EDITION (main_new.js)
-   First-person windshield view. Same shift, same rules — but the city
+   Third-person chase cam — you drive the ice truck, seen from behind.
+   Same shift, same rules — but the city
    is the real Manhattan road network from OpenStreetMap (map.json),
    not a procedural grid. See REALMAP_NOTES.md for how it works.
    Controls: ▲ gas · ▼ brake · ◀ ▶ steer · Space = honk
@@ -180,6 +181,31 @@ function processMapData(m) {
   const manhattanRoot = find(tsNode);
   const nodeLand = new Uint8Array(nNodes);
   for (let n = 0; n < nNodes; n++) nodeLand[n] = find(n) === manhattanRoot ? 1 : 0;
+  // Nearest point on any drivable edge to (x, z) within maxR, or null.
+  // Used by the building setback: every facade must sit at least
+  // SETBACK units off the nearest road centerline.
+  function nearestEdgePoint(x, z, maxR) {
+    const cx0 = Math.floor((x - maxR) / HASH_CELL), cx1 = Math.floor((x + maxR) / HASH_CELL);
+    const cz0 = Math.floor((z - maxR) / HASH_CELL), cz1 = Math.floor((z + maxR) / HASH_CELL);
+    let best = null, bestD2 = Infinity;
+    for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+      const arr = hash.get(cx + "," + cz);
+      if (!arr) continue;
+      for (const e of arr) {
+        const a = edgeA[e];
+        const ax = nodeX[a], az = nodeZ[a];
+        const ux = edgeUX[e], uz = edgeUZ[e];
+        let t = (x - ax) * ux + (z - az) * uz;
+        t = Math.max(0, Math.min(edgeLen[e], t));
+        const px = ax + ux * t, pz = az + uz * t;
+        const dx = x - px, dz = z - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD2) { bestD2 = d2; best = { d: Math.sqrt(d2), x: px, z: pz, ux, uz }; }
+      }
+    }
+    return best;
+  }
+
   // LES buildings: oriented bounding boxes from real footprints
   // (map.json "buildings" layer, Lower East Side only). Footprints stay
   // at true map scale; heights use the game's stylized vertical (old
@@ -219,6 +245,33 @@ function processMapData(m) {
       cx: ccx + mu * ux - mv * uz, cz: ccz + mu * uz + mv * ux,
       w, d, rot: Math.atan2(uz, ux), h: b.h || 55,
     });
+  }
+  // Street clearance: push every building back so its FACE sits at least
+  // SETBACK units off the nearest road centerline. Real LES tenements
+  // sit ~5 off the centerline, which left no room to maneuver; the extra
+  // setback widens every street corridor. Roads, names, one-ways and the
+  // layout stay exactly as mapped — only the curb setback is game-ified.
+  // Three passes so corner buildings clear both streets. Distance is
+  // measured from the road point to the building's box, not its center —
+  // a deep building's face can sit on the road while its center is far.
+  const SETBACK = 8;
+  for (let iter = 0; iter < 3; iter++) {
+    for (const b of buildings) {
+      const near = nearestEdgePoint(b.cx, b.cz, 40 + Math.max(b.w, b.d) / 2);
+      if (!near) continue;
+      const cU = Math.cos(b.rot), sU = Math.sin(b.rot);
+      const rx = near.x - b.cx, rz = near.z - b.cz;
+      const u = rx * cU + rz * sU, v = -rx * sU + rz * cU;
+      const du = Math.max(0, Math.abs(u) - b.w / 2);
+      const dv = Math.max(0, Math.abs(v) - b.d / 2);
+      const dist = Math.hypot(du, dv);
+      if (dist >= SETBACK) continue;
+      let dx = b.cx - near.x, dz = b.cz - near.z;
+      if (Math.hypot(dx, dz) < 0.5) { dx = -near.uz; dz = near.ux; }
+      const l = Math.hypot(dx, dz) || 1;
+      const push = SETBACK - dist;
+      b.cx += (dx / l) * push; b.cz += (dz / l) * push;
+    }
   }
   // Spatial hash over building OBBs (cell 128) for the player push-out.
   const bHash = new Map();
@@ -415,7 +468,7 @@ scene.add(moon);
 const headlight = new THREE.SpotLight(0xffeecf, 120, 700, 0.48, 0.55, 1.4);
 scene.add(headlight);
 scene.add(headlight.target);
-const coneGeo = new THREE.ConeGeometry(70, 260, 20, 1, true);
+const coneGeo = new THREE.ConeGeometry(45, 170, 20, 1, true);
 coneGeo.rotateX(-Math.PI / 2); // apex toward -Z (the truck)
 const headCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
   color: 0xffedb8, transparent: true, opacity: 0.07,
@@ -495,12 +548,15 @@ function buildGroundTexture() {
     cls === "primary" ? 3 : cls === "secondary" ? 2 : 1;
   const color = (cls) => (cls === "motorway" || cls === "trunk") ? "#e8c547" :
     cls === "primary" ? "#f2f2f2" : cls === "secondary" ? "#c9d4e0" : "#7d8ca3";
-  const width = (cls) => (cls === "motorway" || cls === "trunk") ? 6.5 :
-    cls === "primary" ? 4.7 : cls === "secondary" ? 3.9 : cls === "tertiary" ? 3.2 : 2.6;
+  // Wider ribbons to match the widened corridors (facades now sit ≥8 off
+  // the centerline): the colored road runs to the curb instead of
+  // leaving a bare gap.
+  const width = (cls) => (cls === "motorway" || cls === "trunk") ? 7.5 :
+    cls === "primary" ? 5.5 : cls === "secondary" ? 4.8 : cls === "tertiary" ? 4.0 : 3.4;
   const roads = RAW.roads.filter((r) => DRIVABLE.has(r.c)).sort((a, b) => rank(a.c) - rank(b.c));
   // Asphalt bed under every drivable road: a dark ribbon wider than the
   // colored centerline, so streets read as surfaces (with a curb edge)
-  // instead of bare lines when viewed from the driver's seat.
+  // instead of bare lines when viewed from the chase camera.
   for (const r of roads) {
     g.strokeStyle = "#232a38"; g.lineWidth = width(r.c) + 2.5;
     g.beginPath();
@@ -769,6 +825,38 @@ function makeCarMesh(color) {
   g.add(beam);
   return { group: g, tailMat };
 }
+
+// The player's truck (third-person chase cam). Ice-box cargo in pale
+// blue-white, blue cab, slight emissive so it reads at night. Forward
+// is +z, same as the traffic cars (rotation.y = heading).
+function makeTruckMesh() {
+  const g = new THREE.Group();
+  const cargo = new THREE.Mesh(new THREE.BoxGeometry(10, 7, 16),
+    new THREE.MeshLambertMaterial({ color: 0xdfe9f2, emissive: 0x2a3644 }));
+  cargo.position.set(0, 5, -3); g.add(cargo);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(8, 5, 6),
+    new THREE.MeshLambertMaterial({ color: 0x2e86c1, emissive: 0x0e2a3d }));
+  cab.position.set(0, 4, 8); g.add(cab);
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(7, 2, 0.6),
+    new THREE.MeshLambertMaterial({ color: 0x0e141b }));
+  shield.position.set(0, 5, 11); g.add(shield);
+  const wheelGeo = new THREE.CylinderGeometry(2, 2, 1.8, 10);
+  const wheelMat = new THREE.MeshLambertMaterial({ color: 0x0a0a0a });
+  for (const [wx, wz] of [[-5, 7], [5, 7], [-5, -7], [5, -7]]) {
+    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(wx, 2, wz);
+    g.add(w);
+  }
+  const tailMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+  for (const hx of [-4, 4]) {
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, 0.6), tailMat);
+    tl.position.set(hx, 4, -11.2); g.add(tl);
+  }
+  return { group: g };
+}
+const truckMesh = makeTruckMesh();
+scene.add(truckMesh.group);
 function makePersonMesh(color) {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 7, 8),
@@ -1148,6 +1236,9 @@ function update(dt) {
     collideBuildings(M, player, 3);
     player.x = Math.max(M.minX + 20, Math.min(M.minX + M.W - 20, player.x));
     player.z = Math.max(M.minZ + 20, Math.min(M.minZ + M.H - 20, player.z));
+    // the visible truck follows the player point
+    truckMesh.group.position.set(player.x, 0, player.z);
+    truckMesh.group.rotation.y = player.heading;
 
   } else {
     // frozen (lunch): bleed off motion so the truck doesn't lurch after
@@ -1315,7 +1406,7 @@ function update(dt) {
   const hfx = Math.sin(player.heading), hfz = Math.cos(player.heading);
   headlight.position.set(player.x + hfx * 20, 18, player.z + hfz * 20);
   headlight.target.position.set(player.x + hfx * 300, 0, player.z + hfz * 300);
-  headCone.position.set(player.x + hfx * 130, 10, player.z + hfz * 130);
+  headCone.position.set(player.x + hfx * 85, 10, player.z + hfz * 85);
   headCone.rotation.y = player.heading;
 
   updateSignalLamps();
@@ -1324,13 +1415,12 @@ function update(dt) {
   updateHUD();
 }
 
-/* ---------------- camera (windshield POV) ---------------- */
+/* ---------------- camera (third-person chase — the truck is in frame) ---------------- */
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
-let hoodAdded = false;
 function updateCamera(dt) {
   const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
-  camPos.set(player.x - fx * 20, 10, player.z - fz * 20);
-  camLook.set(player.x + fx * 50, 5 + pitchSm, player.z + fz * 50);
+  camPos.set(player.x - fx * 34, 19, player.z - fz * 34);
+  camLook.set(player.x + fx * 45, 4 + pitchSm, player.z + fz * 45);
   camera.position.lerp(camPos, Math.min(1, dt * 8));
   const lookCur = new THREE.Vector3();
   camera.getWorldDirection(lookCur);
@@ -1342,24 +1432,6 @@ function updateCamera(dt) {
   const targetFov = 68 + Math.min(1, Math.abs(player.speed) / MAX_FWD) * 7;
   camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
   camera.updateProjectionMatrix();
-
-  if (!hoodAdded) {
-    hoodAdded = true;
-    const hood = new THREE.Mesh(new THREE.BoxGeometry(20, 9, 30),
-      new THREE.MeshLambertMaterial({ color: 0x1c2733 }));
-    hood.position.set(0, -5.5, -16);
-    camera.add(hood);
-    // side mirrors
-    const mirMat = new THREE.MeshLambertMaterial({ color: 0x0e141b });
-    for (const mx of [-11, 11]) {
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(4, 1.5, 1.5), mirMat);
-      arm.position.set(mx, -2, -14);
-      camera.add(arm);
-      const mir = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 1), mirMat);
-      mir.position.set(mx + (mx > 0 ? 3 : -3), 0, -14);
-      camera.add(mir);
-    }
-  }
 }
 
 /* ---------------- HUD / minimap / compass ---------------- */
